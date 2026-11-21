@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import type { ImageAsset, QuizMode, WordSet } from './types/models';
+import type { ImageAsset, QuizMode, WordGroup, WordSet } from './types/models';
 import { defaultVocabRepo, formatStorageError } from './db/indexedDb';
 import { createSampleWordSets } from './services/sampleData';
-import { decodeShareTokenToWordSet } from './services/shareService';
+import {
+  decodeShareTokenToWordGroup,
+  decodeShareTokenToWordSet,
+} from './services/shareService';
 import { Layout } from './components/Layout';
 import { HomePage } from './pages/HomePage';
 import { ImportPage } from './pages/ImportPage';
 import { SetDetailPage } from './pages/SetDetailPage';
 import { PracticePage } from './pages/PracticePage';
 import { SharedSetPage } from './pages/SharedSetPage';
+import { SharedGroupPage } from './pages/SharedGroupPage';
 
 type Route =
   | { page: 'home' }
@@ -17,7 +21,9 @@ type Route =
   | { page: 'detail'; setId: string }
   | { page: 'practice'; setId: string; mode: QuizMode }
   | { page: 'share'; token: string }
-  | { page: 'share-practice'; token: string; mode: QuizMode };
+  | { page: 'share-practice'; token: string; mode: QuizMode }
+  | { page: 'share-group'; token: string }
+  | { page: 'share-group-practice'; token: string; setIndex: number; mode: QuizMode };
 
 const VALID_MODES: QuizMode[] = ['fill-blank', 'listen-spell', 'picture-choice'];
 
@@ -44,6 +50,25 @@ function parseHashRoute(hash: string): Route {
   ) {
     return { page: 'share-practice', token: parts[1], mode: parts[2] as QuizMode };
   }
+  if (parts[0] === 'g' && parts[1]) {
+    return { page: 'share-group', token: parts[1] };
+  }
+  if (
+    parts[0] === 'gp' &&
+    parts[1] &&
+    parts[2] !== undefined &&
+    VALID_MODES.includes(parts[3] as QuizMode)
+  ) {
+    const idx = Number(parts[2]);
+    if (Number.isInteger(idx) && idx >= 0) {
+      return {
+        page: 'share-group-practice',
+        token: parts[1],
+        setIndex: idx,
+        mode: parts[3] as QuizMode,
+      };
+    }
+  }
   return { page: 'home' };
 }
 
@@ -55,13 +80,19 @@ function buildHash(route: Route): string {
   if (route.page === 'share-practice') {
     return `#/sp/${encodeURIComponent(route.token)}/${encodeURIComponent(route.mode)}`;
   }
+  if (route.page === 'share-group') return `#/g/${encodeURIComponent(route.token)}`;
+  if (route.page === 'share-group-practice') {
+    return `#/gp/${encodeURIComponent(route.token)}/${route.setIndex}/${encodeURIComponent(route.mode)}`;
+  }
   return `#/practice/${encodeURIComponent(route.setId)}/${encodeURIComponent(route.mode)}`;
 }
 
 export function App() {
   const [route, setRoute] = useState<Route>(() => parseHashRoute(window.location.hash));
   const [wordSets, setWordSets] = useState<WordSet[]>([]);
+  const [wordGroups, setWordGroups] = useState<WordGroup[]>([]);
   const [imageAssets, setImageAssets] = useState<ImageAsset[]>([]);
+  const [initialGroupFilterId, setInitialGroupFilterId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -87,11 +118,13 @@ export function App() {
   const refreshData = useCallback(async () => {
     setLoadError(null);
     try {
-      const [sets, assets] = await Promise.all([
+      const [sets, groups, assets] = await Promise.all([
         defaultVocabRepo.listWordSets(),
+        defaultVocabRepo.listWordGroups(),
         defaultVocabRepo.listImageAssets(),
       ]);
       setWordSets(sets);
+      setWordGroups(groups);
       setImageAssets(assets);
     } catch (err) {
       setLoadError(formatStorageError(err));
@@ -126,28 +159,64 @@ export function App() {
     [navigate, refreshData],
   );
 
-  const handleUpdateSet = useCallback(
-    async (updated: WordSet) => {
-      await defaultVocabRepo.saveWordSet(updated);
-      setWordSets((prev) =>
-        prev
-          .map((s) => (s.id === updated.id ? updated : s))
-          .sort((a, b) => b.updatedAt - a.updatedAt),
-      );
+  const handleSaveImportedGroup = useCallback(
+    async (group: WordGroup, sets: WordSet[], bundledAssets?: ImageAsset[]) => {
+      if (bundledAssets && bundledAssets.length > 0) {
+        for (const asset of bundledAssets) {
+          await defaultVocabRepo.saveImageAsset(asset);
+        }
+      }
+      for (const s of sets) {
+        await defaultVocabRepo.saveWordSet(s);
+      }
+      await defaultVocabRepo.saveWordGroup(group);
+      await refreshData();
+      setInitialGroupFilterId(group.id);
+      navigate({ page: 'home' });
     },
-    [],
+    [navigate, refreshData],
   );
+
+  const handleUpdateSet = useCallback(async (updated: WordSet) => {
+    await defaultVocabRepo.saveWordSet(updated);
+    setWordSets((prev) =>
+      prev
+        .map((s) => (s.id === updated.id ? updated : s))
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    );
+  }, []);
 
   const handleDeleteSet = useCallback(
     async (setId: string) => {
       await defaultVocabRepo.deleteWordSet(setId);
       setWordSets((prev) => prev.filter((s) => s.id !== setId));
+      setWordGroups((prev) =>
+        prev.map((g) =>
+          g.wordSetIds.includes(setId)
+            ? { ...g, wordSetIds: g.wordSetIds.filter((id) => id !== setId) }
+            : g,
+        ),
+      );
       if (route.page !== 'home' && 'setId' in route && route.setId === setId) {
         navigate({ page: 'home' });
       }
     },
     [navigate, route],
   );
+
+  const handleSaveGroup = useCallback(async (group: WordGroup) => {
+    await defaultVocabRepo.saveWordGroup(group);
+    setWordGroups((prev) => {
+      const exists = prev.some((g) => g.id === group.id);
+      const next = exists ? prev.map((g) => (g.id === group.id ? group : g)) : [group, ...prev];
+      return next.sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+  }, []);
+
+  const handleDeleteGroup = useCallback(async (groupId: string) => {
+    await defaultVocabRepo.deleteWordGroup(groupId);
+    setWordGroups((prev) => prev.filter((g) => g.id !== groupId));
+  }, []);
 
   const handleSaveImageAsset = useCallback(async (asset: ImageAsset) => {
     const saved = await defaultVocabRepo.saveImageAsset(asset);
@@ -177,16 +246,37 @@ export function App() {
         return null;
       }
     }
+    if (route.page === 'share-group-practice') {
+      try {
+        const decoded = decodeShareTokenToWordGroup(route.token);
+        return decoded.wordSets[route.setIndex] ?? null;
+      } catch {
+        return null;
+      }
+    }
     return null;
   }, [route, wordSets]);
+
+  const activeSharedGroupTitle = useMemo(() => {
+    if (route.page === 'share-group') {
+      try {
+        return decodeShareTokenToWordGroup(route.token).groupName;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, [route]);
 
   useEffect(() => {
     if (activeSet?.name) {
       document.title = `${activeSet.name}｜英文單字複習小幫手`;
+    } else if (activeSharedGroupTitle) {
+      document.title = `${activeSharedGroupTitle}｜英文單字複習小幫手`;
     } else {
       document.title = '英文單字複習小幫手';
     }
-  }, [activeSet?.name]);
+  }, [activeSet?.name, activeSharedGroupTitle]);
 
   return (
     <Layout
@@ -209,17 +299,22 @@ export function App() {
       {route.page === 'home' ? (
         <HomePage
           wordSets={wordSets}
+          wordGroups={wordGroups}
           assetsById={assetsById}
           loading={loading}
+          initialGroupFilterId={initialGroupFilterId}
           onSelectSet={(setId) => navigate({ page: 'detail', setId })}
           onStartImport={() => navigate({ page: 'import' })}
           onLoadSamples={handleLoadSamples}
           onDeleteSet={handleDeleteSet}
+          onSaveGroup={handleSaveGroup}
+          onDeleteGroup={handleDeleteGroup}
         />
       ) : route.page === 'import' ? (
         <ImportPage
           onCancel={() => navigate({ page: 'home' })}
           onSaveWordSet={handleSaveNewSet}
+          onSaveImportedGroup={handleSaveImportedGroup}
         />
       ) : route.page === 'detail' ? (
         loading ? (
@@ -275,6 +370,38 @@ export function App() {
         ) : (
           <div className="card stack-md">
             <h1 className="section-title">分享連結無效或已損毀</h1>
+            <div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => navigate({ page: 'home' })}
+              >
+                返回單字組清單
+              </button>
+            </div>
+          </div>
+        )
+      ) : route.page === 'share-group' ? (
+        <SharedGroupPage
+          token={route.token}
+          onGoHome={() => navigate({ page: 'home' })}
+          onStartDirectPractice={(setIndex, mode) =>
+            navigate({ page: 'share-group-practice', token: route.token, setIndex, mode })
+          }
+          onSaveGroupToLocal={(group, sets) => handleSaveImportedGroup(group, sets)}
+        />
+      ) : route.page === 'share-group-practice' ? (
+        activeSet ? (
+          <PracticePage
+            wordSet={activeSet}
+            mode={route.mode}
+            assetsById={{}}
+            onBackToSet={() => navigate({ page: 'share-group', token: route.token })}
+            onBackToHome={() => navigate({ page: 'home' })}
+          />
+        ) : (
+          <div className="card stack-md">
+            <h1 className="section-title">群組分享連結無效或找不到該課次</h1>
             <div>
               <button
                 type="button"

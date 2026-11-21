@@ -24,6 +24,18 @@ export interface WordSet {
   entries: WordEntry[];
 }
 
+export interface WordGroup {
+  id: string;
+  /** 群組名稱（例如：Flyer Units） */
+  name: string;
+  /** 可選群組說明 */
+  description?: string;
+  /** 群組內有序的單字組 ID 清單 */
+  wordSetIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ImageAsset {
   id: string;
   /** 供重用的英文詞 */

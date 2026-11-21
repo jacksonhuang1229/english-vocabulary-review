@@ -1,10 +1,11 @@
 import { deflateSync, inflateSync } from 'fflate';
-import type { ImageAsset, WordEntry, WordSet } from '../types/models';
+import type { ImageAsset, WordEntry, WordGroup, WordSet } from '../types/models';
 import { normalizeMeaningKey, normalizeWordKey } from '../quiz/normalize';
 import { generateId } from '../utils/id';
 
 const PACKAGE_SCHEMA_VERSION = 1;
 const MAX_SAFE_SHARE_URL_LENGTH = 8000;
+const GROUP_RECORD_SEP = '\u001E';
 
 interface LegacyCompactSharePayload {
   v: number;
@@ -476,6 +477,412 @@ export function parseWordSetPackageJson(rawJson: string): {
     },
     imageAssets,
   };
+}
+
+export interface ExportedWordGroupPackage {
+  format: 'english-vocab-review-group-package';
+  version: number;
+  exportedAt: number;
+  group: {
+    name: string;
+    description?: string;
+  };
+  wordSets: Array<{
+    name: string;
+    entries: Array<{
+      word: string;
+      meaningHint?: string;
+      imageId?: string | null;
+      imageConfirmed?: boolean;
+      isAbstract?: boolean;
+    }>;
+  }>;
+  imageAssets: ExportedImageAsset[];
+}
+
+export type ParsedAnyVocabPackage =
+  | { kind: 'single'; wordSet: WordSet; imageAssets: ImageAsset[] }
+  | { kind: 'group'; group: WordGroup; wordSets: WordSet[]; imageAssets: ImageAsset[] };
+
+function serializeWordSetCompactLines(wordSet: WordSet): string {
+  const lines: string[] = [sanitizeLineField(wordSet.name)];
+  for (const entry of wordSet.entries) {
+    const word = sanitizeLineField(entry.word);
+    if (!word) continue;
+    const meaning = entry.meaningHint ? sanitizeLineField(entry.meaningHint) : '';
+    if (entry.isAbstract) {
+      lines.push(`${word}\t${meaning}\t1`);
+    } else if (meaning) {
+      lines.push(`${word}\t${meaning}`);
+    } else {
+      lines.push(word);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * 將整個群組（群組名稱 + 多個單字組）壓縮編碼成分享短碼（gz. / gc.）。
+ */
+export function encodeWordGroupToShareToken(groupName: string, sets: WordSet[]): string {
+  const nonEmptySets = sets.filter((s) => s.entries.some((e) => e.word.trim().length > 0));
+  const payloadText = [
+    sanitizeLineField(groupName),
+    ...nonEmptySets.map((s) => serializeWordSetCompactLines(s)),
+  ].join(GROUP_RECORD_SEP);
+
+  const rawBytes = new TextEncoder().encode(payloadText);
+  const plainToken = `gc.${bytesToBase64Url(rawBytes)}`;
+
+  try {
+    const compressed = deflateSync(rawBytes, { level: 9 });
+    const compressedToken = `gz.${bytesToBase64Url(compressed)}`;
+    return compressedToken.length < plainToken.length ? compressedToken : plainToken;
+  } catch {
+    return plainToken;
+  }
+}
+
+/**
+ * 解析群組分享連結短碼（gz. / gc.）。
+ */
+export function decodeShareTokenToWordGroup(token: string): {
+  groupName: string;
+  wordSets: WordSet[];
+} {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    throw new Error('群組分享連結內容為空，請確認連結是否完整。');
+  }
+
+  let text: string;
+  if (trimmed.startsWith('gz.')) {
+    try {
+      const compressed = base64UrlToBytes(trimmed.slice(3));
+      const inflated = inflateSync(compressed);
+      text = new TextDecoder().decode(inflated);
+    } catch {
+      throw new Error('無法解壓縮群組分享連結，可能是連結被截斷或格式有誤。');
+    }
+  } else if (trimmed.startsWith('gc.')) {
+    try {
+      const bytes = base64UrlToBytes(trimmed.slice(3));
+      text = new TextDecoder().decode(bytes);
+    } catch {
+      throw new Error('無法讀取群組分享連結內容，可能是連結被截斷或格式有誤。');
+    }
+  } else {
+    throw new Error('不支援的群組分享連結格式。');
+  }
+
+  const parts = text.split(GROUP_RECORD_SEP);
+  const groupName = (parts[0] ?? '').trim();
+  if (!groupName) {
+    throw new Error('群組分享連結缺少群組名稱。');
+  }
+
+  const wordSets: WordSet[] = [];
+  for (let i = 1; i < parts.length; i += 1) {
+    const block = parts[i];
+    if (!block?.trim()) continue;
+    try {
+      const parsedSet = parseCompactLinesToWordSet(block);
+      wordSets.push({
+        ...parsedSet,
+        id: `shared_group_set_${i - 1}`,
+      });
+    } catch {
+      // 略過空白或格式異常的單一課次
+    }
+  }
+
+  if (wordSets.length === 0) {
+    throw new Error('分享的群組中沒有任何有效的單字組。');
+  }
+
+  return { groupName, wordSets };
+}
+
+/**
+ * 產生群組分享網址（#/g/<token>）。
+ */
+export function buildGroupShareUrl(
+  groupName: string,
+  sets: WordSet[],
+  baseHref?: string,
+): { url: string; tooLong: boolean } {
+  const token = encodeWordGroupToShareToken(groupName, sets);
+  const originAndPath =
+    baseHref ??
+    (typeof window !== 'undefined'
+      ? `${window.location.origin}${window.location.pathname}`
+      : 'https://jacksonhuang1229.github.io/english-vocabulary-review/');
+  const url = `${originAndPath}#/g/${token}`;
+  return {
+    url,
+    tooLong: url.length > MAX_SAFE_SHARE_URL_LENGTH,
+  };
+}
+
+/**
+ * 產生群組分享訊息（含群組標題、內含課次摘要與壓縮短連結）。
+ */
+export function buildGroupShareMessage(
+  groupName: string,
+  sets: WordSet[],
+  url: string,
+): { title: string; summary: string; fullText: string } {
+  const totalWords = sets.reduce((sum, s) => sum + s.entries.length, 0);
+  const previewNames = sets
+    .slice(0, 4)
+    .map((s) => s.name)
+    .join('、');
+  const suffix = sets.length > 4 ? ` 等共 ${sets.length} 個課次` : `（共 ${sets.length} 個課次）`;
+  const title = `英文單字群組分享：${groupName}`;
+  const summary = `包含 ${previewNames}${suffix}，總計 ${totalWords} 個單字。點開連結可直接挑選課次練習，或一鍵把整個群組存到手機！`;
+  const fullText = `📚 ${title}\n${summary}\n👉 ${url}`;
+  return { title, summary, fullText };
+}
+
+/**
+ * 將分享預覽的整個群組複製成全新本機 ID，準備一次寫入 IndexedDB。
+ */
+export function cloneSharedGroupForLocalSave(
+  groupName: string,
+  sets: WordSet[],
+): { group: WordGroup; wordSets: WordSet[] } {
+  const now = Date.now();
+  const wordSets = sets.map((s, idx) => ({
+    id: generateId('set'),
+    name: s.name.trim(),
+    createdAt: now + idx,
+    updatedAt: now + idx,
+    entries: s.entries.map((e) => ({
+      id: generateId('word'),
+      word: e.word,
+      meaningHint: e.meaningHint,
+      isAbstract: e.isAbstract,
+    })),
+  }));
+
+  const group: WordGroup = {
+    id: generateId('grp'),
+    name: groupName.trim() || '匯入的群組',
+    wordSetIds: wordSets.map((s) => s.id),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  return { group, wordSets };
+}
+
+/**
+ * 匯出整個群組完整檔案（.vocab-group.json），包含群組內所有課次與所有共用配圖（共用圖只編碼一份）。
+ */
+export async function exportWordGroupPackageJson(
+  group: WordGroup,
+  sets: WordSet[],
+  assetsById: Record<string, ImageAsset>,
+): Promise<string> {
+  const referencedIds = new Set<string>();
+  for (const set of sets) {
+    for (const entry of set.entries) {
+      if (entry.imageId && assetsById[entry.imageId]) {
+        referencedIds.add(entry.imageId);
+      }
+    }
+  }
+
+  const exportedAssets: ExportedImageAsset[] = [];
+  for (const id of referencedIds) {
+    const asset = assetsById[id];
+    const dataBase64 = await blobToBase64(asset.blob);
+    exportedAssets.push({
+      id: asset.id,
+      word: asset.word,
+      meaningHint: asset.meaningHint,
+      mimeType: asset.mimeType || asset.blob.type || 'image/jpeg',
+      dataBase64,
+      source: asset.source,
+      confirmed: asset.confirmed,
+      confusableWords: asset.confusableWords ?? [],
+    });
+  }
+
+  const pkg: ExportedWordGroupPackage = {
+    format: 'english-vocab-review-group-package',
+    version: PACKAGE_SCHEMA_VERSION,
+    exportedAt: Date.now(),
+    group: {
+      name: group.name,
+      description: group.description,
+    },
+    wordSets: sets.map((set) => ({
+      name: set.name,
+      entries: set.entries.map((entry) => ({
+        word: entry.word,
+        meaningHint: entry.meaningHint,
+        imageId: entry.imageId && referencedIds.has(entry.imageId) ? entry.imageId : null,
+        imageConfirmed:
+          entry.imageId && referencedIds.has(entry.imageId) ? Boolean(entry.imageConfirmed) : false,
+        isAbstract: entry.isAbstract,
+      })),
+    })),
+    imageAssets: exportedAssets,
+  };
+
+  return JSON.stringify(pkg, null, 2);
+}
+
+/**
+ * 解析群組完整共用檔（.vocab-group.json）。
+ */
+export function parseWordGroupPackageJson(rawJson: string): {
+  group: WordGroup;
+  wordSets: WordSet[];
+  imageAssets: ImageAsset[];
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson.replace(/^\uFEFF/, ''));
+  } catch {
+    throw new Error('無法解析此群組檔案，請確認為本網站匯出的 .vocab-group.json 檔。');
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('群組檔案內容格式無效。');
+  }
+
+  const pkg = parsed as Partial<ExportedWordGroupPackage>;
+  if (
+    pkg.format !== 'english-vocab-review-group-package' ||
+    !pkg.group ||
+    typeof pkg.group.name !== 'string' ||
+    !Array.isArray(pkg.wordSets)
+  ) {
+    throw new Error('這不是本網站的共用群組檔案格式（.vocab-group.json）。');
+  }
+
+  const now = Date.now();
+  const idMap = new Map<string, string>();
+  const imageAssets: ImageAsset[] = [];
+
+  if (Array.isArray(pkg.imageAssets)) {
+    for (const rawAsset of pkg.imageAssets) {
+      if (
+        !rawAsset ||
+        typeof rawAsset.id !== 'string' ||
+        typeof rawAsset.dataBase64 !== 'string'
+      ) {
+        continue;
+      }
+      try {
+        const bytes = base64ToBytes(rawAsset.dataBase64);
+        const mimeType = typeof rawAsset.mimeType === 'string' ? rawAsset.mimeType : 'image/jpeg';
+        const blob = new Blob([bytes], { type: mimeType });
+        const newId = generateId('img');
+        idMap.set(rawAsset.id, newId);
+        const word = typeof rawAsset.word === 'string' ? rawAsset.word.trim() : '';
+        const meaningHint =
+          typeof rawAsset.meaningHint === 'string' ? rawAsset.meaningHint.trim() : '';
+        imageAssets.push({
+          id: newId,
+          word,
+          normalizedWord: normalizeWordKey(word),
+          meaningHint,
+          normalizedMeaning: normalizeMeaningKey(meaningHint),
+          blob,
+          mimeType,
+          source: rawAsset.source === 'camera' ? 'camera' : 'upload',
+          confirmed: Boolean(rawAsset.confirmed),
+          confusableWords: Array.isArray(rawAsset.confusableWords)
+            ? rawAsset.confusableWords.filter((w): w is string => typeof w === 'string')
+            : [],
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch {
+        // 略過損毀圖片
+      }
+    }
+  }
+
+  const wordSets: WordSet[] = [];
+  for (let idx = 0; idx < pkg.wordSets.length; idx += 1) {
+    const rawSet = pkg.wordSets[idx];
+    if (!rawSet || typeof rawSet.name !== 'string' || !Array.isArray(rawSet.entries)) continue;
+    const entries: WordEntry[] = [];
+    for (const rawEntry of rawSet.entries) {
+      if (!rawEntry || typeof rawEntry.word !== 'string') continue;
+      const word = rawEntry.word.trim().replace(/\s+/g, ' ');
+      if (!word) continue;
+      const mappedImageId =
+        rawEntry.imageId && idMap.has(rawEntry.imageId) ? idMap.get(rawEntry.imageId)! : null;
+      entries.push({
+        id: generateId('word'),
+        word,
+        meaningHint:
+          typeof rawEntry.meaningHint === 'string' && rawEntry.meaningHint.trim()
+            ? rawEntry.meaningHint.trim()
+            : undefined,
+        imageId: mappedImageId,
+        imageConfirmed: mappedImageId ? Boolean(rawEntry.imageConfirmed) : false,
+        isAbstract: Boolean(rawEntry.isAbstract) || undefined,
+      });
+    }
+    if (entries.length === 0) continue;
+    wordSets.push({
+      id: generateId('set'),
+      name: rawSet.name.trim() || `匯入課次 ${idx + 1}`,
+      createdAt: now + idx,
+      updatedAt: now + idx,
+      entries,
+    });
+  }
+
+  if (wordSets.length === 0) {
+    throw new Error('這個共用群組檔案中沒有任何有效單字組。');
+  }
+
+  const group: WordGroup = {
+    id: generateId('grp'),
+    name: pkg.group.name.trim() || '匯入的群組',
+    description:
+      typeof pkg.group.description === 'string' && pkg.group.description.trim()
+        ? pkg.group.description.trim()
+        : undefined,
+    wordSetIds: wordSets.map((s) => s.id),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  return { group, wordSets, imageAssets };
+}
+
+/**
+ * 自動辨識並解析單一單字組檔（.vocab.json）或群組檔（.vocab-group.json）。
+ */
+export function parseAnyVocabPackageJson(rawJson: string): ParsedAnyVocabPackage {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson.replace(/^\uFEFF/, ''));
+  } catch {
+    throw new Error('無法解析此檔案，請確認為本網站匯出的 .vocab.json 或 .vocab-group.json 檔。');
+  }
+
+  if (parsed && typeof parsed === 'object' && 'format' in parsed) {
+    const fmt = (parsed as { format?: unknown }).format;
+    if (fmt === 'english-vocab-review-group-package') {
+      const res = parseWordGroupPackageJson(rawJson);
+      return { kind: 'group', ...res };
+    }
+    if (fmt === 'english-vocab-review-package') {
+      const res = parseWordSetPackageJson(rawJson);
+      return { kind: 'single', ...res };
+    }
+  }
+
+  throw new Error('不支援的檔案格式，請選擇本網站匯出的共用單字組檔或群組檔。');
 }
 
 /** 匯出純文字 UTF-8 .txt（每行一個英文詞） */

@@ -93,4 +93,47 @@ describe('IndexedDbVocabRepository（驗收 1 與 4）', () => {
     expect(allAssets).toHaveLength(1);
     repo.close();
   });
+
+  it('群組可持久化多個單字組，且刪除單字組時自動清理群組參照', async () => {
+    const dbName = `test-db-${Date.now()}-groups`;
+    const repo = new IndexedDbVocabRepository(dbName);
+
+    await repo.saveWordSet({
+      id: 'u1',
+      name: 'Flyer Unit 1',
+      createdAt: 1,
+      updatedAt: 1,
+      entries: [{ id: 'w1', word: 'airport' }],
+    });
+    await repo.saveWordSet({
+      id: 'u2',
+      name: 'Flyer Unit 2',
+      createdAt: 2,
+      updatedAt: 2,
+      entries: [{ id: 'w2', word: 'rocket' }],
+    });
+
+    await repo.saveWordGroup({
+      id: 'grp-flyer',
+      name: 'Flyer Units',
+      wordSetIds: ['u1', 'u2'],
+      createdAt: 10,
+      updatedAt: 10,
+    });
+
+    const groups = await repo.listWordGroups();
+    expect(groups).toHaveLength(1);
+    expect(groups[0].wordSetIds).toEqual(['u1', 'u2']);
+
+    // 刪除 u1 後，群組中應只剩 u2
+    await repo.deleteWordSet('u1');
+    const afterDelete = await repo.getWordGroup('grp-flyer');
+    expect(afterDelete?.wordSetIds).toEqual(['u2']);
+
+    // 刪除群組不影響 u2 本身
+    await repo.deleteWordGroup('grp-flyer');
+    expect(await repo.listWordGroups()).toHaveLength(0);
+    expect((await repo.getWordSet('u2'))?.name).toBe('Flyer Unit 2');
+    repo.close();
+  });
 });

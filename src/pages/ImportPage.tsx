@@ -7,19 +7,20 @@ import {
   ClipboardPaste,
   FileJson,
   FileText,
+  FolderOpen,
   Image as ImageIcon,
   ImagePlus,
   Loader2,
   Plus,
   Trash2,
 } from 'lucide-react';
-import type { DraftEntry, ImageAsset, WordSet } from '../types/models';
+import type { DraftEntry, ImageAsset, WordGroup, WordSet } from '../types/models';
 import {
   parseWordListText,
   readUtf8TextFile,
   suggestSetNameFromFilename,
 } from '../services/textImport';
-import { parseWordSetPackageJson } from '../services/shareService';
+import { parseAnyVocabPackageJson } from '../services/shareService';
 import { normalizeSpellText } from '../quiz/normalize';
 import { recognizeEnglishWordsFromImage } from '../services/ocrService';
 import { formatStorageError } from '../db/indexedDb';
@@ -28,12 +29,22 @@ import { generateId } from '../utils/id';
 interface ImportPageProps {
   onCancel: () => void;
   onSaveWordSet: (wordSet: WordSet, bundledAssets?: ImageAsset[]) => Promise<void>;
+  onSaveImportedGroup: (
+    group: WordGroup,
+    wordSets: WordSet[],
+    bundledAssets?: ImageAsset[],
+  ) => Promise<void>;
 }
 
-export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
+export function ImportPage({ onCancel, onSaveWordSet, onSaveImportedGroup }: ImportPageProps) {
   const [setName, setSetName] = useState('');
   const [entries, setEntries] = useState<DraftEntry[]>([]);
   const [bundledAssetsById, setBundledAssetsById] = useState<Record<string, ImageAsset>>({});
+  const [pendingGroupImport, setPendingGroupImport] = useState<{
+    group: WordGroup;
+    wordSets: WordSet[];
+    imageAssets: ImageAsset[];
+  } | null>(null);
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pasteText, setPasteText] = useState('');
 
@@ -90,7 +101,24 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
     setNotice(null);
     try {
       const content = await readUtf8TextFile(file);
-      const { wordSet: importedSet, imageAssets } = parseWordSetPackageJson(content);
+      const parsed = parseAnyVocabPackageJson(content);
+
+      if (parsed.kind === 'group') {
+        setPendingGroupImport({
+          group: parsed.group,
+          wordSets: parsed.wordSets,
+          imageAssets: parsed.imageAssets,
+        });
+        setNotice({
+          tone: 'success',
+          text: `已讀取共用群組檔「${file.name}」（內含 ${parsed.wordSets.length} 個課次${
+            parsed.imageAssets.length > 0 ? `與 ${parsed.imageAssets.length} 張配圖` : ''
+          }），請在下方確認群組名稱後一鍵匯入！`,
+        });
+        return;
+      }
+
+      const { wordSet: importedSet, imageAssets } = parsed;
       if (!setName.trim()) {
         setSetName(importedSet.name);
       }
@@ -122,8 +150,33 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
     } catch (err) {
       setNotice({
         tone: 'danger',
-        text: `${err instanceof Error ? err.message : '共用單字組檔讀取失敗'}。您目前的編輯內容已保留。`,
+        text: `${err instanceof Error ? err.message : '共用檔案讀取失敗'}。您目前的編輯內容已保留。`,
       });
+    }
+  }
+
+  async function handleConfirmGroupImport() {
+    if (!pendingGroupImport) return;
+    const trimmedName = pendingGroupImport.group.name.trim();
+    if (!trimmedName) {
+      setNotice({ tone: 'warning', text: '請先填寫群組名稱再匯入。' });
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    try {
+      await onSaveImportedGroup(
+        { ...pendingGroupImport.group, name: trimmedName },
+        pendingGroupImport.wordSets,
+        pendingGroupImport.imageAssets,
+      );
+    } catch (err) {
+      setNotice({
+        tone: 'danger',
+        text: `${formatStorageError(err)} 您目前的匯入預覽已保留。`,
+      });
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -351,8 +404,8 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
             <span className="source-tile-icon" style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}>
               <FileJson size={20} />
             </span>
-            <span className="source-tile-title">匯入共用單字組檔</span>
-            <span className="source-tile-desc">匯入他人分享的 .vocab.json（含配圖）</span>
+            <span className="source-tile-title">匯入共用檔／群組檔</span>
+            <span className="source-tile-desc">支援 .vocab.json 與 .vocab-group.json（含配圖）</span>
           </button>
 
           <button
@@ -469,6 +522,83 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
           </div>
         ) : null}
       </section>
+
+      {/* 群組檔匯入確認區（當上傳 .vocab-group.json 時顯示） */}
+      {pendingGroupImport ? (
+        <section className="card stack-md" style={{ borderColor: 'var(--color-success-border)' }}>
+          <div className="row-between">
+            <div className="row">
+              <FolderOpen size={20} style={{ color: 'var(--color-success)' }} />
+              <h2 className="section-title">群組檔匯入預覽</h2>
+            </div>
+            <span className="badge badge-success">
+              {pendingGroupImport.wordSets.length} 個課次
+              {pendingGroupImport.imageAssets.length > 0
+                ? ` · ${pendingGroupImport.imageAssets.length} 張配圖`
+                : ''}
+            </span>
+          </div>
+
+          <div className="field">
+            <label className="field-label" htmlFor="import-group-name">
+              群組名稱（可修改）
+            </label>
+            <input
+              id="import-group-name"
+              className="input"
+              type="text"
+              value={pendingGroupImport.group.name}
+              onChange={(e) =>
+                setPendingGroupImport((prev) =>
+                  prev ? { ...prev, group: { ...prev.group, name: e.target.value } } : null,
+                )
+              }
+            />
+          </div>
+
+          <div className="stack-sm">
+            {pendingGroupImport.wordSets.map((ws, idx) => (
+              <div
+                key={ws.id}
+                className="row-between"
+                style={{
+                  padding: '0.55rem 0.75rem',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                }}
+              >
+                <div className="row-wrap">
+                  <span className="entry-row-num" style={{ marginTop: 0, width: 28, height: 28 }}>
+                    {idx + 1}
+                  </span>
+                  <strong>{ws.name}</strong>
+                </div>
+                <span className="badge badge-primary">{ws.entries.length} 個單字</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="row-wrap" style={{ justifyContent: 'flex-end' }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={saving}
+              onClick={() => setPendingGroupImport(null)}
+            >
+              取消此群組檔
+            </button>
+            <button
+              type="button"
+              className="btn btn-success btn-lg"
+              disabled={saving}
+              onClick={() => void handleConfirmGroupImport()}
+            >
+              <CheckCircle2 size={18} />
+              <span>{saving ? '匯入中…' : '確認一次匯入整個群組'}</span>
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {/* 共用可編輯預覽區 */}
       <section className="card stack-md">

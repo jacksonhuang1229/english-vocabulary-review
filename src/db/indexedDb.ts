@@ -1,16 +1,21 @@
-import type { ImageAsset, WordSet } from '../types/models';
+import type { ImageAsset, WordGroup, WordSet } from '../types/models';
 import { normalizeMeaningKey, normalizeWordKey } from '../quiz/normalize';
 
 const DEFAULT_DB_NAME = 'english-vocab-review-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_WORD_SETS = 'wordSets';
 const STORE_IMAGE_ASSETS = 'imageAssets';
+const STORE_WORD_GROUPS = 'wordGroups';
 
 export interface VocabRepository {
   listWordSets(): Promise<WordSet[]>;
   getWordSet(id: string): Promise<WordSet | undefined>;
   saveWordSet(wordSet: WordSet): Promise<WordSet>;
   deleteWordSet(id: string): Promise<void>;
+  listWordGroups(): Promise<WordGroup[]>;
+  getWordGroup(id: string): Promise<WordGroup | undefined>;
+  saveWordGroup(group: WordGroup): Promise<WordGroup>;
+  deleteWordGroup(id: string): Promise<void>;
   listImageAssets(): Promise<ImageAsset[]>;
   getImageAsset(id: string): Promise<ImageAsset | undefined>;
   saveImageAsset(asset: ImageAsset): Promise<ImageAsset>;
@@ -84,6 +89,9 @@ export class IndexedDbVocabRepository implements VocabRepository {
           const store = db.createObjectStore(STORE_IMAGE_ASSETS, { keyPath: 'id' });
           store.createIndex('by_normalizedWord', 'normalizedWord', { unique: false });
         }
+        if (!db.objectStoreNames.contains(STORE_WORD_GROUPS)) {
+          db.createObjectStore(STORE_WORD_GROUPS, { keyPath: 'id' });
+        }
       };
 
       request.onsuccess = () => {
@@ -136,8 +144,54 @@ export class IndexedDbVocabRepository implements VocabRepository {
 
   async deleteWordSet(id: string): Promise<void> {
     const db = await this.openDb();
-    const tx = db.transaction(STORE_WORD_SETS, 'readwrite');
-    const store = tx.objectStore(STORE_WORD_SETS);
+    const tx = db.transaction([STORE_WORD_SETS, STORE_WORD_GROUPS], 'readwrite');
+    const setStore = tx.objectStore(STORE_WORD_SETS);
+    const groupStore = tx.objectStore(STORE_WORD_GROUPS);
+    setStore.delete(id);
+
+    // 同步從所有群組移除已刪除單字組的參照
+    const groups = await requestToPromise(groupStore.getAll() as IDBRequest<WordGroup[]>);
+    const now = Date.now();
+    for (const group of groups) {
+      if (group.wordSetIds.includes(id)) {
+        groupStore.put({
+          ...group,
+          wordSetIds: group.wordSetIds.filter((sid) => sid !== id),
+          updatedAt: now,
+        });
+      }
+    }
+    await transactionDone(tx);
+  }
+
+  async listWordGroups(): Promise<WordGroup[]> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_WORD_GROUPS, 'readonly');
+    const store = tx.objectStore(STORE_WORD_GROUPS);
+    const items = await requestToPromise(store.getAll() as IDBRequest<WordGroup[]>);
+    return items.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  async getWordGroup(id: string): Promise<WordGroup | undefined> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_WORD_GROUPS, 'readonly');
+    const store = tx.objectStore(STORE_WORD_GROUPS);
+    return requestToPromise(store.get(id) as IDBRequest<WordGroup | undefined>);
+  }
+
+  async saveWordGroup(group: WordGroup): Promise<WordGroup> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_WORD_GROUPS, 'readwrite');
+    const store = tx.objectStore(STORE_WORD_GROUPS);
+    store.put(group);
+    await transactionDone(tx);
+    return group;
+  }
+
+  async deleteWordGroup(id: string): Promise<void> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_WORD_GROUPS, 'readwrite');
+    const store = tx.objectStore(STORE_WORD_GROUPS);
     store.delete(id);
     await transactionDone(tx);
   }

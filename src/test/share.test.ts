@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGroupShareMessage,
+  buildGroupShareUrl,
   buildShareMessage,
   buildShareUrl,
+  decodeShareTokenToWordGroup,
   decodeShareTokenToWordSet,
+  encodeWordGroupToShareToken,
   encodeWordSetToShareToken,
+  exportWordGroupPackageJson,
   exportWordSetAsTxt,
   exportWordSetPackageJson,
+  parseAnyVocabPackageJson,
   parseWordSetPackageJson,
 } from '../services/shareService';
 import { parseWordListText } from '../services/textImport';
-import type { ImageAsset, WordSet } from '../types/models';
+import type { ImageAsset, WordGroup, WordSet } from '../types/models';
 
 describe('單字組分享連結與匯出／匯入', () => {
   const sampleSet: WordSet = {
@@ -116,5 +122,98 @@ describe('單字組分享連結與匯出／匯入', () => {
     const txt = exportWordSetAsTxt(sampleSet);
     const parsed = parseWordListText(txt);
     expect(parsed.entries.map((e) => e.word)).toEqual(['ice cream', 'well-known', 'go', 'a']);
+  });
+
+  it('群組壓縮短連結可一次編碼與還原多個課次，並產生含標題與摘要的分享訊息', () => {
+    const unit1: WordSet = {
+      id: 'u1',
+      name: 'Flyer Unit 1',
+      createdAt: 1,
+      updatedAt: 1,
+      entries: [
+        { id: 'a1', word: 'airport', meaningHint: '機場' },
+        { id: 'a2', word: 'ice cream', meaningHint: '冰淇淋' },
+      ],
+    };
+    const unit2: WordSet = {
+      id: 'u2',
+      name: 'Flyer Unit 2',
+      createdAt: 2,
+      updatedAt: 2,
+      entries: [
+        { id: 'b1', word: 'well-known', meaningHint: '知名的', isAbstract: true },
+        { id: 'b2', word: 'rocket' },
+      ],
+    };
+
+    const token = encodeWordGroupToShareToken('Flyer Units', [unit1, unit2]);
+    const decoded = decodeShareTokenToWordGroup(token);
+    expect(decoded.groupName).toBe('Flyer Units');
+    expect(decoded.wordSets).toHaveLength(2);
+    expect(decoded.wordSets[0].name).toBe('Flyer Unit 1');
+    expect(decoded.wordSets[0].entries.map((e) => e.word)).toEqual(['airport', 'ice cream']);
+    expect(decoded.wordSets[1].entries[0].isAbstract).toBe(true);
+
+    const { url } = buildGroupShareUrl('Flyer Units', [unit1, unit2], 'https://example.com/');
+    expect(url.startsWith('https://example.com/#/g/')).toBe(true);
+    const msg = buildGroupShareMessage('Flyer Units', [unit1, unit2], url);
+    expect(msg.title).toContain('Flyer Units');
+    expect(msg.summary).toContain('Flyer Unit 1');
+    expect(msg.summary).toContain('Flyer Unit 2');
+    expect(msg.fullText).toContain(url);
+  });
+
+  it('群組完整共用檔（.vocab-group.json）可打包多課次且共用配圖只存一份，並能自動辨識還原', async () => {
+    const sharedBytes = new Uint8Array([1, 2, 3, 4, 5]);
+    const sharedAsset: ImageAsset = {
+      id: 'img-shared',
+      word: 'ice cream',
+      normalizedWord: 'ice cream',
+      meaningHint: '冰淇淋',
+      normalizedMeaning: '冰淇淋',
+      blob: new Blob([sharedBytes], { type: 'image/png' }),
+      mimeType: 'image/png',
+      source: 'upload',
+      confirmed: true,
+      confusableWords: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    const u1: WordSet = {
+      id: 'u1',
+      name: 'Flyer Unit 1',
+      createdAt: 1,
+      updatedAt: 1,
+      entries: [{ id: 'e1', word: 'ice cream', imageId: 'img-shared', imageConfirmed: true }],
+    };
+    const u2: WordSet = {
+      id: 'u2',
+      name: 'Flyer Unit 2',
+      createdAt: 2,
+      updatedAt: 2,
+      entries: [{ id: 'e2', word: 'ice cream', imageId: 'img-shared', imageConfirmed: true }],
+    };
+    const group: WordGroup = {
+      id: 'grp-1',
+      name: 'Flyer Units',
+      wordSetIds: ['u1', 'u2'],
+      createdAt: 10,
+      updatedAt: 10,
+    };
+
+    const json = await exportWordGroupPackageJson(group, [u1, u2], { 'img-shared': sharedAsset });
+    const parsed = parseAnyVocabPackageJson(json);
+
+    expect(parsed.kind).toBe('group');
+    if (parsed.kind !== 'group') return;
+
+    expect(parsed.group.name).toBe('Flyer Units');
+    expect(parsed.wordSets).toHaveLength(2);
+    expect(parsed.group.wordSetIds).toEqual(parsed.wordSets.map((s) => s.id));
+    // 兩個課次共用同一張圖，只編碼與還原一份 ImageAsset
+    expect(parsed.imageAssets).toHaveLength(1);
+    expect(parsed.wordSets[0].entries[0].imageId).toBe(parsed.imageAssets[0].id);
+    expect(parsed.wordSets[1].entries[0].imageId).toBe(parsed.imageAssets[0].id);
   });
 });
