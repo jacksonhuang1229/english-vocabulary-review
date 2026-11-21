@@ -1,12 +1,12 @@
+import { deflateSync, inflateSync } from 'fflate';
 import type { ImageAsset, WordEntry, WordSet } from '../types/models';
 import { normalizeMeaningKey, normalizeWordKey } from '../quiz/normalize';
 import { generateId } from '../utils/id';
 
-const SHARE_SCHEMA_VERSION = 1;
 const PACKAGE_SCHEMA_VERSION = 1;
 const MAX_SAFE_SHARE_URL_LENGTH = 8000;
 
-interface CompactSharePayload {
+interface LegacyCompactSharePayload {
   v: number;
   n: string;
   e: Array<{
@@ -103,31 +103,84 @@ async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-/**
- * 將單字組（名稱、單字與詞義提示）編碼成可直接放在網址上的短碼。
- * 不含圖片二進位檔，讓連結可在 LINE、簡訊與瀏覽器中直接開啟。
- */
-export function encodeWordSetToShareToken(wordSet: WordSet): string {
-  const payload: CompactSharePayload = {
-    v: SHARE_SCHEMA_VERSION,
-    n: wordSet.name.trim(),
-    e: wordSet.entries
-      .filter((entry) => entry.word.trim().length > 0)
-      .map((entry) => {
-        const item: CompactSharePayload['e'][number] = { w: entry.word.trim() };
-        if (entry.meaningHint?.trim()) item.m = entry.meaningHint.trim();
-        if (entry.isAbstract) item.a = 1;
-        return item;
-      }),
-  };
-
-  const json = JSON.stringify(payload);
-  const bytes = new TextEncoder().encode(json);
-  return bytesToBase64Url(bytes);
+function sanitizeLineField(text: string): string {
+  return text.replace(/[\r\n\t]+/g, ' ').trim();
 }
 
 /**
- * 解析分享網址中的單字組資料。若連結不完整或格式錯誤會拋出清楚錯誤。
+ * 將單字組以精簡行格式＋Deflate 壓縮編碼成最短的分享碼：
+ * - 第一行為課次名稱
+ * - 後續每行為：英文詞[\t詞義[\t1(抽象詞)]]
+ * - 自動比較壓縮（z.）與未壓縮精簡格式（c.），挑選字元數較短者。
+ */
+export function encodeWordSetToShareToken(wordSet: WordSet): string {
+  const lines: string[] = [sanitizeLineField(wordSet.name)];
+  for (const entry of wordSet.entries) {
+    const word = sanitizeLineField(entry.word);
+    if (!word) continue;
+    const meaning = entry.meaningHint ? sanitizeLineField(entry.meaningHint) : '';
+    if (entry.isAbstract) {
+      lines.push(`${word}\t${meaning}\t1`);
+    } else if (meaning) {
+      lines.push(`${word}\t${meaning}`);
+    } else {
+      lines.push(word);
+    }
+  }
+
+  const rawBytes = new TextEncoder().encode(lines.join('\n'));
+  const plainToken = `c.${bytesToBase64Url(rawBytes)}`;
+
+  try {
+    const compressed = deflateSync(rawBytes, { level: 9 });
+    const compressedToken = `z.${bytesToBase64Url(compressed)}`;
+    return compressedToken.length < plainToken.length ? compressedToken : plainToken;
+  } catch {
+    return plainToken;
+  }
+}
+
+function parseCompactLinesToWordSet(text: string): WordSet {
+  const lines = text.split('\n');
+  const name = (lines[0] ?? '').trim();
+  if (!name) {
+    throw new Error('分享連結缺少單字組名稱。');
+  }
+
+  const now = Date.now();
+  const entries: WordEntry[] = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+    const [rawWord = '', rawMeaning = '', rawAbstract = ''] = line.split('\t');
+    const word = rawWord.trim().replace(/\s+/g, ' ');
+    if (!word) continue;
+    const meaningHint = rawMeaning.trim() || undefined;
+    const isAbstract = rawAbstract.trim() === '1' ? true : undefined;
+    entries.push({
+      id: `shared_${i - 1}_${normalizeWordKey(word).replace(/\s+/g, '_')}`,
+      word,
+      meaningHint,
+      isAbstract,
+    });
+  }
+
+  if (entries.length === 0) {
+    throw new Error('分享的單字組中沒有任何有效詞條。');
+  }
+
+  return {
+    id: 'shared_preview',
+    name,
+    createdAt: now,
+    updatedAt: now,
+    entries,
+  };
+}
+
+/**
+ * 解析分享網址中的單字組資料。
+ * 同時相容新版壓縮短碼（z. / c.）與舊版 JSON 編碼。
  */
 export function decodeShareTokenToWordSet(token: string): WordSet {
   const trimmed = token.trim();
@@ -135,6 +188,32 @@ export function decodeShareTokenToWordSet(token: string): WordSet {
     throw new Error('分享連結內容為空，請確認連結是否完整。');
   }
 
+  // 新版壓縮格式 (z.<base64url(deflate)>)
+  if (trimmed.startsWith('z.')) {
+    let text: string;
+    try {
+      const compressed = base64UrlToBytes(trimmed.slice(2));
+      const inflated = inflateSync(compressed);
+      text = new TextDecoder().decode(inflated);
+    } catch {
+      throw new Error('無法解壓縮分享連結內容，可能是連結被截斷或格式有誤。');
+    }
+    return parseCompactLinesToWordSet(text);
+  }
+
+  // 新版未壓縮精簡格式 (c.<base64url(utf8)>)
+  if (trimmed.startsWith('c.')) {
+    let text: string;
+    try {
+      const bytes = base64UrlToBytes(trimmed.slice(2));
+      text = new TextDecoder().decode(bytes);
+    } catch {
+      throw new Error('無法讀取分享連結內容，可能是連結被截斷或格式有誤。');
+    }
+    return parseCompactLinesToWordSet(text);
+  }
+
+  // 相容舊版 JSON Base64URL 格式
   let parsed: unknown;
   try {
     const bytes = base64UrlToBytes(trimmed);
@@ -148,7 +227,7 @@ export function decodeShareTokenToWordSet(token: string): WordSet {
     throw new Error('分享連結資料格式不正確。');
   }
 
-  const record = parsed as Partial<CompactSharePayload>;
+  const record = parsed as Partial<LegacyCompactSharePayload>;
   if (typeof record.n !== 'string' || !record.n.trim() || !Array.isArray(record.e)) {
     throw new Error('分享連結缺少單字組名稱或詞條清單。');
   }
@@ -173,7 +252,7 @@ export function decodeShareTokenToWordSet(token: string): WordSet {
   }
 
   return {
-    id: `shared_preview`,
+    id: 'shared_preview',
     name: record.n.trim(),
     createdAt: now,
     updatedAt: now,
@@ -182,7 +261,7 @@ export function decodeShareTokenToWordSet(token: string): WordSet {
 }
 
 /**
- * 產生可直接分享的完整網址（基於目前網站網址 + #/share/<token>）。
+ * 產生縮短後的分享網址（使用精簡壓縮編碼與 #/s/ 短路徑）。
  */
 export function buildShareUrl(wordSet: WordSet, baseHref?: string): {
   url: string;
@@ -194,11 +273,31 @@ export function buildShareUrl(wordSet: WordSet, baseHref?: string): {
     (typeof window !== 'undefined'
       ? `${window.location.origin}${window.location.pathname}`
       : 'https://jacksonhuang1229.github.io/english-vocabulary-review/');
-  const url = `${originAndPath}#/share/${token}`;
+  const url = `${originAndPath}#/s/${token}`;
   return {
     url,
     tooLong: url.length > MAX_SAFE_SHARE_URL_LENGTH,
   };
+}
+
+/**
+ * 產生含標題、單字摘要與短連結的友善分享文字，讓對方在 LINE／訊息一眼就知道這是什麼。
+ */
+export function buildShareMessage(
+  wordSet: WordSet,
+  url: string,
+): { title: string; summary: string; fullText: string } {
+  const words = wordSet.entries.map((e) => e.word.trim()).filter(Boolean);
+  const previewWords = words.slice(0, 5).join('、');
+  const suffix = words.length > 5 ? ` 等共 ${words.length} 個單字` : `（共 ${words.length} 個單字）`;
+  const title = `英文單字組分享：${wordSet.name}`;
+  const summary =
+    words.length > 0
+      ? `包含 ${previewWords}${suffix}。點開連結可直接做字母填空／聽音拼字，也能存到自己的手機！`
+      : '點開連結即可複習英文單字，免登入！';
+  const fullText = `📚 ${title}\n${summary}\n👉 ${url}`;
+
+  return { title, summary, fullText };
 }
 
 /**

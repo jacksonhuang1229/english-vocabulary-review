@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildShareMessage,
   buildShareUrl,
   decodeShareTokenToWordSet,
   encodeWordSetToShareToken,
@@ -24,7 +25,7 @@ describe('單字組分享連結與匯出／匯入', () => {
     ],
   };
 
-  it('分享連結 token 可正確往返編碼與解碼中文與英文詞條', () => {
+  it('壓縮短連結 token 可正確往返編碼與解碼，並明顯短於舊版 JSON 編碼', () => {
     const token = encodeWordSetToShareToken(sampleSet);
     const decoded = decodeShareTokenToWordSet(token);
 
@@ -34,8 +35,42 @@ describe('單字組分享連結與匯出／匯入', () => {
     expect(decoded.entries[1].isAbstract).toBe(true);
 
     const { url, tooLong } = buildShareUrl(sampleSet, 'https://example.com/app/');
-    expect(url.startsWith('https://example.com/app/#/share/')).toBe(true);
+    expect(url.startsWith('https://example.com/app/#/s/')).toBe(true);
     expect(tooLong).toBe(false);
+
+    // 驗證壓縮後的短碼比未壓縮 JSON 明顯更短
+    const legacyJsonLen = btoa(
+      unescape(
+        encodeURIComponent(
+          JSON.stringify({
+            v: 1,
+            n: sampleSet.name,
+            e: sampleSet.entries.map((e) => ({ w: e.word, m: e.meaningHint })),
+          }),
+        ),
+      ),
+    ).length;
+    expect(token.length).toBeLessThan(legacyJsonLen);
+
+    // 驗證分享訊息包含標題、單字摘要與短連結
+    const msg = buildShareMessage(sampleSet, url);
+    expect(msg.title).toContain('Flyer - Unit 4');
+    expect(msg.summary).toContain('ice cream');
+    expect(msg.fullText).toContain(url);
+  });
+
+  it('相容解碼舊版 JSON Base64URL 分享連結', () => {
+    const legacyBytes = new TextEncoder().encode(
+      JSON.stringify({ v: 1, n: 'Legacy Unit', e: [{ w: 'apple', m: '蘋果' }] }),
+    );
+    let binary = '';
+    for (const b of legacyBytes) binary += String.fromCharCode(b);
+    const legacyToken = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const decoded = decodeShareTokenToWordSet(legacyToken);
+    expect(decoded.name).toBe('Legacy Unit');
+    expect(decoded.entries[0].word).toBe('apple');
+    expect(decoded.entries[0].meaningHint).toBe('蘋果');
   });
 
   it('損毀或不完整的分享連結會拋出清楚錯誤', () => {

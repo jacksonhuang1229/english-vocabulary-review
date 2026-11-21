@@ -34,10 +34,14 @@ function parseHashRoute(hash: string): Route {
   if (parts[0] === 'practice' && parts[1] && VALID_MODES.includes(parts[2] as QuizMode)) {
     return { page: 'practice', setId: parts[1], mode: parts[2] as QuizMode };
   }
-  if (parts[0] === 'share' && parts[1]) {
+  if ((parts[0] === 's' || parts[0] === 'share') && parts[1]) {
     return { page: 'share', token: parts[1] };
   }
-  if (parts[0] === 'share-practice' && parts[1] && VALID_MODES.includes(parts[2] as QuizMode)) {
+  if (
+    (parts[0] === 'sp' || parts[0] === 'share-practice') &&
+    parts[1] &&
+    VALID_MODES.includes(parts[2] as QuizMode)
+  ) {
     return { page: 'share-practice', token: parts[1], mode: parts[2] as QuizMode };
   }
   return { page: 'home' };
@@ -47,9 +51,9 @@ function buildHash(route: Route): string {
   if (route.page === 'home') return '#/';
   if (route.page === 'import') return '#/import';
   if (route.page === 'detail') return `#/set/${encodeURIComponent(route.setId)}`;
-  if (route.page === 'share') return `#/share/${encodeURIComponent(route.token)}`;
+  if (route.page === 'share') return `#/s/${encodeURIComponent(route.token)}`;
   if (route.page === 'share-practice') {
-    return `#/share-practice/${encodeURIComponent(route.token)}/${encodeURIComponent(route.mode)}`;
+    return `#/sp/${encodeURIComponent(route.token)}/${encodeURIComponent(route.mode)}`;
   }
   return `#/practice/${encodeURIComponent(route.setId)}/${encodeURIComponent(route.mode)}`;
 }
@@ -166,7 +170,7 @@ export function App() {
     if (route.page === 'detail' || route.page === 'practice') {
       return wordSets.find((s) => s.id === route.setId) ?? null;
     }
-    if (route.page === 'share-practice') {
+    if (route.page === 'share' || route.page === 'share-practice') {
       try {
         return decodeShareTokenToWordSet(route.token);
       } catch {
@@ -175,6 +179,14 @@ export function App() {
     }
     return null;
   }, [route, wordSets]);
+
+  useEffect(() => {
+    if (activeSet?.name) {
+      document.title = `${activeSet.name}｜英文單字複習小幫手`;
+    } else {
+      document.title = '英文單字複習小幫手';
+    }
+  }, [activeSet?.name]);
 
   return (
     <Layout

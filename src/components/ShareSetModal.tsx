@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { ImageAsset, WordSet } from '../types/models';
 import {
+  buildShareMessage,
   buildShareUrl,
   downloadTextFile,
   exportWordSetAsTxt,
@@ -51,12 +52,16 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalProps) {
-  const [copied, setCopied] = useState(false);
+  const [copiedMode, setCopiedMode] = useState<'message' | 'link' | null>(null);
   const [exportingPkg, setExportingPkg] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const shareInfo = useMemo(() => buildShareUrl(wordSet), [wordSet]);
+  const shareMessage = useMemo(
+    () => buildShareMessage(wordSet, shareInfo.url),
+    [wordSet, shareInfo.url],
+  );
 
   const imageCount = useMemo(() => {
     const unique = new Set<string>();
@@ -78,16 +83,29 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
+  async function handleCopyMessage() {
+    setErrorMsg(null);
+    setStatusMsg(null);
+    const ok = await copyToClipboard(shareMessage.fullText);
+    if (ok) {
+      setCopiedMode('message');
+      setStatusMsg('已複製完整分享訊息（含標題、單字摘要與壓縮短連結），直接貼到 LINE 或訊息即可！');
+      window.setTimeout(() => setCopiedMode(null), 2500);
+    } else {
+      setErrorMsg('無法自動複製，請手動全選下方分享訊息並複製。');
+    }
+  }
+
   async function handleCopyLink() {
     setErrorMsg(null);
     setStatusMsg(null);
     const ok = await copyToClipboard(shareInfo.url);
     if (ok) {
-      setCopied(true);
-      setStatusMsg('已複製分享連結！直接貼到 LINE 或訊息給對方即可開啟使用。');
-      window.setTimeout(() => setCopied(false), 2500);
+      setCopiedMode('link');
+      setStatusMsg('已複製壓縮後的短連結！貼到 LINE 時也會自動顯示網站預覽卡片。');
+      window.setTimeout(() => setCopiedMode(null), 2500);
     } else {
-      setErrorMsg('無法自動複製，請手動全選下方連結並複製。');
+      setErrorMsg('無法自動複製，請手動複製下方連結。');
     }
   }
 
@@ -97,13 +115,13 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
     setStatusMsg(null);
     try {
       await navigator.share({
-        title: `英文單字組：${wordSet.name}`,
-        text: `分享單字組「${wordSet.name}」（共 ${wordSet.entries.length} 個單字），點開連結可直接練習或儲存！`,
+        title: shareMessage.title,
+        text: `${shareMessage.title}\n${shareMessage.summary}`,
         url: shareInfo.url,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      setErrorMsg('系統分享未完成，您仍可點「複製連結」手動傳送。');
+      setErrorMsg('系統分享未完成，您仍可點「複製分享訊息」手動傳送。');
     }
   }
 
@@ -196,44 +214,54 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
           </div>
         ) : null}
 
-        {/* 方式一：直接分享連結 */}
+        {/* 方式一：直接分享連結（含標題與摘要） */}
         <section className="card-subtle stack-sm">
           <div className="row-between">
             <div className="row">
               <Link2 size={18} style={{ color: 'var(--color-primary)' }} />
-              <strong>方式一：分享網址連結（點開就能直接練習或儲存）</strong>
+              <strong>方式一：傳送分享訊息與壓縮短連結</strong>
             </div>
             <span className="badge badge-primary">最方便</span>
           </div>
 
           <p className="field-hint" style={{ margin: 0 }}>
-            將連結貼到 LINE 或簡訊，對方打開後不需匯入就能直接做「字母填空」與「聽音拼字」，也能一鍵存到自己的裝置。
-            {imageCount > 0 ? '（注意：網址分享僅含單字與詞義；若要連同配圖一起分享，請使用下方「方式二」。）' : ''}
+            已自動壓縮網址並附上課次標題與單字摘要，貼到 LINE／訊息時對方一眼就看得懂，點開就能直接練習或存到手機。
+            {imageCount > 0 ? '（注意：連結不含圖片；若要連同配圖一起分享，請使用下方「方式二」。）' : ''}
           </p>
 
           {shareInfo.tooLong ? (
             <div className="alert alert-warning">
               <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
               <span>
-                這組單字較多，產生的連結較長（{shareInfo.url.length} 字元），部分通訊軟體可能截斷；建議改用下方「方式二：匯出共用單字組檔」。
+                這組單字較多，壓縮後的連結仍較長（{shareInfo.url.length} 字元），部分通訊軟體可能截斷；建議改用下方「方式二：匯出共用單字組檔」。
               </span>
             </div>
           ) : null}
 
-          <input
-            type="text"
+          <textarea
             readOnly
-            className="input"
-            aria-label="單字組分享連結"
-            style={{ fontSize: '0.82rem', fontFamily: 'var(--font-mono)' }}
-            value={shareInfo.url}
+            className="textarea"
+            aria-label="含標題與摘要的分享訊息預覽"
+            style={{
+              minHeight: 112,
+              fontSize: '0.86rem',
+              lineHeight: 1.5,
+              wordBreak: 'break-all',
+            }}
+            value={shareMessage.fullText}
             onFocus={(e) => e.currentTarget.select()}
           />
 
           <div className="row-wrap">
-            <button type="button" className="btn btn-primary" onClick={() => void handleCopyLink()}>
-              {copied ? <Check size={16} /> : <Copy size={16} />}
-              <span>{copied ? '已複製連結' : '複製分享連結'}</span>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void handleCopyMessage()}
+            >
+              {copiedMode === 'message' ? <Check size={16} /> : <Copy size={16} />}
+              <span>
+                {copiedMode === 'message' ? '已複製分享訊息' : '複製分享訊息（含標題與摘要）'}
+              </span>
             </button>
             {canNativeShare ? (
               <button
@@ -245,6 +273,14 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
                 <span>用手機分享…</span>
               </button>
             ) : null}
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => void handleCopyLink()}
+            >
+              {copiedMode === 'link' ? <Check size={15} /> : <Link2 size={15} />}
+              <span>{copiedMode === 'link' ? '已複製短連結' : '只複製短連結'}</span>
+            </button>
           </div>
         </section>
 
