@@ -1,11 +1,12 @@
-import type { ImageAsset, WordGroup, WordSet } from '../types/models';
+import type { ImageAsset, PracticeRecord, WordGroup, WordSet } from '../types/models';
 import { normalizeMeaningKey, normalizeWordKey } from '../quiz/normalize';
 
 const DEFAULT_DB_NAME = 'english-vocab-review-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_WORD_SETS = 'wordSets';
 const STORE_IMAGE_ASSETS = 'imageAssets';
 const STORE_WORD_GROUPS = 'wordGroups';
+const STORE_PRACTICE_RECORDS = 'practiceRecords';
 
 export interface VocabRepository {
   listWordSets(): Promise<WordSet[]>;
@@ -16,6 +17,10 @@ export interface VocabRepository {
   getWordGroup(id: string): Promise<WordGroup | undefined>;
   saveWordGroup(group: WordGroup): Promise<WordGroup>;
   deleteWordGroup(id: string): Promise<void>;
+  listPracticeRecords(wordSetId?: string): Promise<PracticeRecord[]>;
+  savePracticeRecord(record: PracticeRecord): Promise<PracticeRecord>;
+  deletePracticeRecord(id: string): Promise<void>;
+  clearPracticeRecords(wordSetId?: string): Promise<void>;
   listImageAssets(): Promise<ImageAsset[]>;
   getImageAsset(id: string): Promise<ImageAsset | undefined>;
   saveImageAsset(asset: ImageAsset): Promise<ImageAsset>;
@@ -91,6 +96,11 @@ export class IndexedDbVocabRepository implements VocabRepository {
         }
         if (!db.objectStoreNames.contains(STORE_WORD_GROUPS)) {
           db.createObjectStore(STORE_WORD_GROUPS, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORE_PRACTICE_RECORDS)) {
+          const recStore = db.createObjectStore(STORE_PRACTICE_RECORDS, { keyPath: 'id' });
+          recStore.createIndex('by_wordSetId', 'wordSetId', { unique: false });
+          recStore.createIndex('by_completedAt', 'completedAt', { unique: false });
         }
       };
 
@@ -193,6 +203,53 @@ export class IndexedDbVocabRepository implements VocabRepository {
     const tx = db.transaction(STORE_WORD_GROUPS, 'readwrite');
     const store = tx.objectStore(STORE_WORD_GROUPS);
     store.delete(id);
+    await transactionDone(tx);
+  }
+
+  async listPracticeRecords(wordSetId?: string): Promise<PracticeRecord[]> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_PRACTICE_RECORDS, 'readonly');
+    const store = tx.objectStore(STORE_PRACTICE_RECORDS);
+    let items: PracticeRecord[];
+    if (wordSetId) {
+      const index = store.index('by_wordSetId');
+      items = await requestToPromise(index.getAll(wordSetId) as IDBRequest<PracticeRecord[]>);
+    } else {
+      items = await requestToPromise(store.getAll() as IDBRequest<PracticeRecord[]>);
+    }
+    return items.sort((a, b) => b.completedAt - a.completedAt);
+  }
+
+  async savePracticeRecord(record: PracticeRecord): Promise<PracticeRecord> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_PRACTICE_RECORDS, 'readwrite');
+    const store = tx.objectStore(STORE_PRACTICE_RECORDS);
+    store.put(record);
+    await transactionDone(tx);
+    return record;
+  }
+
+  async deletePracticeRecord(id: string): Promise<void> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_PRACTICE_RECORDS, 'readwrite');
+    const store = tx.objectStore(STORE_PRACTICE_RECORDS);
+    store.delete(id);
+    await transactionDone(tx);
+  }
+
+  async clearPracticeRecords(wordSetId?: string): Promise<void> {
+    const db = await this.openDb();
+    const tx = db.transaction(STORE_PRACTICE_RECORDS, 'readwrite');
+    const store = tx.objectStore(STORE_PRACTICE_RECORDS);
+    if (!wordSetId) {
+      store.clear();
+    } else {
+      const index = store.index('by_wordSetId');
+      const items = await requestToPromise(index.getAll(wordSetId) as IDBRequest<PracticeRecord[]>);
+      for (const item of items) {
+        store.delete(item.id);
+      }
+    }
     await transactionDone(tx);
   }
 

@@ -136,4 +136,58 @@ describe('IndexedDbVocabRepository（驗收 1 與 4）', () => {
     expect((await repo.getWordSet('u2'))?.name).toBe('Flyer Unit 2');
     repo.close();
   });
+
+  it('複習紀錄可持久化每次複習時間、答對與答錯題目，並支援依課次查詢與刪除', async () => {
+    const dbName = `test-db-${Date.now()}-records`;
+    const repo = new IndexedDbVocabRepository(dbName);
+
+    await repo.savePracticeRecord({
+      id: 'rec-1',
+      wordSetId: 'u4',
+      wordSetName: 'Flyer - Unit 4',
+      mode: 'fill-blank',
+      startedAt: 1000,
+      completedAt: 2000,
+      durationSeconds: 45,
+      totalCount: 2,
+      correctCount: 1,
+      wrongCount: 1,
+      accuracy: 50,
+      results: [
+        { entryId: 'w1', word: 'ice cream', userAnswer: 'ice cream', correct: true },
+        { entryId: 'w2', word: 'well-known', userAnswer: 'well-knawn', correct: false },
+      ],
+    });
+
+    await repo.savePracticeRecord({
+      id: 'rec-2',
+      wordSetId: 'u5',
+      wordSetName: 'Flyer - Unit 5',
+      mode: 'listen-spell',
+      startedAt: 3000,
+      completedAt: 5000,
+      durationSeconds: 30,
+      totalCount: 1,
+      correctCount: 1,
+      wrongCount: 0,
+      accuracy: 100,
+      results: [{ entryId: 'w3', word: 'rocket', userAnswer: 'rocket', correct: true }],
+    });
+
+    const all = await repo.listPracticeRecords();
+    expect(all.map((r) => r.id)).toEqual(['rec-2', 'rec-1']); // 最新在前
+
+    const onlyU4 = await repo.listPracticeRecords('u4');
+    expect(onlyU4).toHaveLength(1);
+    expect(onlyU4[0].wrongCount).toBe(1);
+    expect(onlyU4[0].results[1].word).toBe('well-known');
+
+    await repo.deletePracticeRecord('rec-1');
+    expect(await repo.listPracticeRecords('u4')).toHaveLength(0);
+    expect(await repo.listPracticeRecords()).toHaveLength(1);
+
+    await repo.clearPracticeRecords();
+    expect(await repo.listPracticeRecords()).toHaveLength(0);
+    repo.close();
+  });
 });

@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
-import { BookOpen, Plus } from 'lucide-react';
+import { BookOpen, History, Plus } from 'lucide-react';
 
 interface LayoutProps {
   children: ReactNode;
   onGoHome: () => void;
   onGoImport?: () => void;
+  onGoHistory?: () => void;
+  recordCount?: number;
   showImportAction?: boolean;
 }
 
@@ -12,6 +14,8 @@ export function Layout({
   children,
   onGoHome,
   onGoImport,
+  onGoHistory,
+  recordCount = 0,
   showImportAction = false,
 }: LayoutProps) {
   return (
@@ -28,17 +32,26 @@ export function Layout({
             </span>
           </button>
 
-          {showImportAction && onGoImport ? (
-            <button type="button" className="btn btn-primary btn-sm" onClick={onGoImport}>
-              <Plus size={16} aria-hidden="true" />
-              <span>新增單字組</span>
-            </button>
-          ) : (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onGoHome}>
-              <BookOpen size={16} aria-hidden="true" />
-              <span>所有課次</span>
-            </button>
-          )}
+          <div className="row" style={{ gap: '0.35rem' }}>
+            {onGoHistory ? (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onGoHistory}>
+                <History size={16} aria-hidden="true" />
+                <span>複習紀錄{recordCount > 0 ? ` (${recordCount})` : ''}</span>
+              </button>
+            ) : null}
+
+            {showImportAction && onGoImport ? (
+              <button type="button" className="btn btn-primary btn-sm" onClick={onGoImport}>
+                <Plus size={16} aria-hidden="true" />
+                <span>新增單字組</span>
+              </button>
+            ) : (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onGoHome}>
+                <BookOpen size={16} aria-hidden="true" />
+                <span>所有課次</span>
+              </button>
+            )}
+          </div>
         </div>
       </header>
 

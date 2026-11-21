@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
+  History,
   ImagePlus,
   RotateCcw,
   Trophy,
@@ -10,6 +11,7 @@ import {
 } from 'lucide-react';
 import type {
   ImageAsset,
+  PracticeRecord,
   QuizMode,
   QuizQuestionResult,
   WordEntry,
@@ -22,6 +24,7 @@ import {
   type PictureChoiceQuestion,
 } from '../quiz/pictureChoice';
 import { loadEnglishVoiceStatus, speakEnglishWord, stopSpeaking } from '../services/speechService';
+import { generateId } from '../utils/id';
 import { FillBlankRunner } from './practice/FillBlankRunner';
 import { ListenSpellRunner } from './practice/ListenSpellRunner';
 import { PictureChoiceRunner } from './practice/PictureChoiceRunner';
@@ -32,6 +35,8 @@ interface PracticePageProps {
   assetsById: Record<string, ImageAsset>;
   onBackToSet: () => void;
   onBackToHome: () => void;
+  onRecordCompleted?: (record: PracticeRecord) => Promise<void>;
+  onViewHistory?: () => void;
 }
 
 type BuiltItem =
@@ -80,12 +85,16 @@ export function PracticePage({
   assetsById,
   onBackToSet,
   onBackToHome,
+  onRecordCompleted,
+  onViewHistory,
 }: PracticePageProps) {
   const [roundSeed, setRoundSeed] = useState(0);
+  const [roundStartedAt, setRoundStartedAt] = useState<number>(() => Date.now());
   const [retryEntryIds, setRetryEntryIds] = useState<Set<string> | undefined>(undefined);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [results, setResults] = useState<QuizQuestionResult[]>([]);
   const [finished, setFinished] = useState(false);
+  const [recordSaved, setRecordSaved] = useState(false);
   const [englishVoice, setEnglishVoice] = useState<SpeechSynthesisVoice | null>(null);
 
   // 為填空與看圖選字預載可選的發音語音（答題後可聽讀音）
@@ -114,6 +123,8 @@ export function PracticePage({
     setCurrentIndex(0);
     setResults([]);
     setFinished(false);
+    setRecordSaved(false);
+    setRoundStartedAt(Date.now());
     setRoundSeed((n) => n + 1);
   }
 
@@ -136,6 +147,33 @@ export function PracticePage({
       setCurrentIndex((i) => i + 1);
     } else {
       setFinished(true);
+      if (onRecordCompleted && results.length > 0) {
+        const completedAt = Date.now();
+        const totalCount = results.length;
+        const correctCount = results.filter((r) => r.correct).length;
+        const wrongCount = totalCount - correctCount;
+        const accuracy = totalCount > 0 ? Math.round((correctCount / totalCount) * 100) : 0;
+        const durationSeconds = Math.max(1, Math.round((completedAt - roundStartedAt) / 1000));
+
+        const record: PracticeRecord = {
+          id: generateId('rec'),
+          wordSetId: wordSet.id,
+          wordSetName: wordSet.name,
+          mode,
+          isRetryWrongOnly: Boolean(retryEntryIds),
+          startedAt: roundStartedAt,
+          completedAt,
+          durationSeconds,
+          totalCount,
+          correctCount,
+          wrongCount,
+          accuracy,
+          results: [...results],
+        };
+        void onRecordCompleted(record)
+          .then(() => setRecordSaved(true))
+          .catch(() => undefined);
+      }
     }
   }
 
@@ -316,7 +354,19 @@ export function PracticePage({
             <button type="button" className="btn btn-secondary btn-lg" onClick={onBackToSet}>
               <span>回到單字組</span>
             </button>
+            {onViewHistory ? (
+              <button type="button" className="btn btn-soft btn-lg" onClick={onViewHistory}>
+                <History size={18} />
+                <span>查看複習紀錄</span>
+              </button>
+            ) : null}
           </div>
+
+          {recordSaved ? (
+            <div className="field-hint" style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+              ✓ 已自動記錄本次複習時間與答題明細至「複習紀錄」
+            </div>
+          ) : null}
 
           {/* 完整答題明細 */}
           <details style={{ textAlign: 'left', marginTop: '0.5rem' }}>

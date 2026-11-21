@@ -88,3 +88,22 @@ export interface QuizQuestionResult {
   userAnswer: string;
   correct: boolean;
 }
+
+export interface PracticeRecord {
+  id: string;
+  wordSetId: string;
+  /** 複習當下的單字組名稱快照 */
+  wordSetName: string;
+  mode: QuizMode;
+  /** 是否為「只重練錯題」輪次 */
+  isRetryWrongOnly?: boolean;
+  startedAt: number;
+  completedAt: number;
+  durationSeconds: number;
+  totalCount: number;
+  correctCount: number;
+  wrongCount: number;
+  accuracy: number;
+  /** 每題完整作答明細（包含答對與答錯的題目） */
+  results: QuizQuestionResult[];
+}

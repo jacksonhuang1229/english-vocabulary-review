@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Edit3,
   Headphones,
+  History,
   Image as ImageIcon,
   Keyboard,
   Play,
@@ -17,12 +18,13 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { ImageAsset, QuizMode, WordEntry, WordSet } from '../types/models';
+import type { ImageAsset, PracticeRecord, QuizMode, WordEntry, WordSet } from '../types/models';
 import { computeSetEligibility } from '../quiz/eligibility';
 import { normalizeSpellText } from '../quiz/normalize';
 import { useImageUrl } from '../hooks/useImageUrl';
 import { ImagePickerModal } from '../components/ImagePickerModal';
 import { ShareSetModal } from '../components/ShareSetModal';
+import { PracticeRecordCard } from '../components/PracticeRecordCard';
 import { formatStorageError } from '../db/indexedDb';
 import { generateId } from '../utils/id';
 
@@ -30,11 +32,14 @@ interface SetDetailPageProps {
   wordSet: WordSet;
   allAssets: ImageAsset[];
   assetsById: Record<string, ImageAsset>;
+  recentRecords: PracticeRecord[];
   onBack: () => void;
   onUpdateSet: (updated: WordSet) => Promise<void>;
   onDeleteSet: (setId: string) => Promise<void>;
   onSaveImageAsset: (asset: ImageAsset) => Promise<void>;
   onStartPractice: (mode: QuizMode) => void;
+  onViewSetHistory: () => void;
+  onDeleteRecord: (recordId: string) => Promise<void>;
 }
 
 function EntryThumb({
@@ -80,11 +85,14 @@ export function SetDetailPage({
   wordSet,
   allAssets,
   assetsById,
+  recentRecords,
   onBack,
   onUpdateSet,
   onDeleteSet,
   onSaveImageAsset,
   onStartPractice,
+  onViewSetHistory,
+  onDeleteRecord,
 }: SetDetailPageProps) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(wordSet.name);
@@ -412,6 +420,33 @@ export function SetDetailPage({
           </div>
         </div>
       </section>
+
+      {/* 本課次最近複習紀錄 */}
+      {recentRecords.length > 0 ? (
+        <section className="card stack-md">
+          <div className="row-between">
+            <div className="row">
+              <History size={18} style={{ color: 'var(--color-primary)' }} />
+              <h2 className="section-title">本課次複習紀錄</h2>
+              <span className="badge badge-primary">共 {recentRecords.length} 次</span>
+            </div>
+            <button type="button" className="btn btn-soft btn-sm" onClick={onViewSetHistory}>
+              查看全部紀錄
+            </button>
+          </div>
+
+          <div className="stack-sm">
+            {recentRecords.slice(0, 3).map((rec) => (
+              <PracticeRecordCard
+                key={rec.id}
+                record={rec}
+                showSetName={false}
+                onDelete={onDeleteRecord}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {/* 詞條與配圖管理 */}
       <section className="card stack-md">

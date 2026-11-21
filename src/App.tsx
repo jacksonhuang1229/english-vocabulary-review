@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import type { ImageAsset, QuizMode, WordGroup, WordSet } from './types/models';
+import type { ImageAsset, PracticeRecord, QuizMode, WordGroup, WordSet } from './types/models';
 import { defaultVocabRepo, formatStorageError } from './db/indexedDb';
 import { createSampleWordSets } from './services/sampleData';
 import {
@@ -14,10 +14,12 @@ import { SetDetailPage } from './pages/SetDetailPage';
 import { PracticePage } from './pages/PracticePage';
 import { SharedSetPage } from './pages/SharedSetPage';
 import { SharedGroupPage } from './pages/SharedGroupPage';
+import { HistoryPage } from './pages/HistoryPage';
 
 type Route =
   | { page: 'home' }
   | { page: 'import' }
+  | { page: 'history'; setId?: string }
   | { page: 'detail'; setId: string }
   | { page: 'practice'; setId: string; mode: QuizMode }
   | { page: 'share'; token: string }
@@ -33,6 +35,9 @@ function parseHashRoute(hash: string): Route {
   const parts = clean.split('/').map((p) => decodeURIComponent(p));
   if (parts[0] === 'import') {
     return { page: 'import' };
+  }
+  if (parts[0] === 'history') {
+    return { page: 'history', setId: parts[1] || undefined };
   }
   if (parts[0] === 'set' && parts[1]) {
     return { page: 'detail', setId: parts[1] };
@@ -75,6 +80,9 @@ function parseHashRoute(hash: string): Route {
 function buildHash(route: Route): string {
   if (route.page === 'home') return '#/';
   if (route.page === 'import') return '#/import';
+  if (route.page === 'history') {
+    return route.setId ? `#/history/${encodeURIComponent(route.setId)}` : '#/history';
+  }
   if (route.page === 'detail') return `#/set/${encodeURIComponent(route.setId)}`;
   if (route.page === 'share') return `#/s/${encodeURIComponent(route.token)}`;
   if (route.page === 'share-practice') {
@@ -92,6 +100,7 @@ export function App() {
   const [wordSets, setWordSets] = useState<WordSet[]>([]);
   const [wordGroups, setWordGroups] = useState<WordGroup[]>([]);
   const [imageAssets, setImageAssets] = useState<ImageAsset[]>([]);
+  const [practiceRecords, setPracticeRecords] = useState<PracticeRecord[]>([]);
   const [initialGroupFilterId, setInitialGroupFilterId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -118,14 +127,16 @@ export function App() {
   const refreshData = useCallback(async () => {
     setLoadError(null);
     try {
-      const [sets, groups, assets] = await Promise.all([
+      const [sets, groups, assets, records] = await Promise.all([
         defaultVocabRepo.listWordSets(),
         defaultVocabRepo.listWordGroups(),
         defaultVocabRepo.listImageAssets(),
+        defaultVocabRepo.listPracticeRecords(),
       ]);
       setWordSets(sets);
       setWordGroups(groups);
       setImageAssets(assets);
+      setPracticeRecords(records);
     } catch (err) {
       setLoadError(formatStorageError(err));
     } finally {
@@ -218,6 +229,27 @@ export function App() {
     setWordGroups((prev) => prev.filter((g) => g.id !== groupId));
   }, []);
 
+  const handleSavePracticeRecord = useCallback(async (record: PracticeRecord) => {
+    await defaultVocabRepo.savePracticeRecord(record);
+    setPracticeRecords((prev) =>
+      [record, ...prev.filter((r) => r.id !== record.id)].sort(
+        (a, b) => b.completedAt - a.completedAt,
+      ),
+    );
+  }, []);
+
+  const handleDeletePracticeRecord = useCallback(async (recordId: string) => {
+    await defaultVocabRepo.deletePracticeRecord(recordId);
+    setPracticeRecords((prev) => prev.filter((r) => r.id !== recordId));
+  }, []);
+
+  const handleClearPracticeRecords = useCallback(async (wordSetId?: string) => {
+    await defaultVocabRepo.clearPracticeRecords(wordSetId);
+    setPracticeRecords((prev) =>
+      wordSetId ? prev.filter((r) => r.wordSetId !== wordSetId) : [],
+    );
+  }, []);
+
   const handleSaveImageAsset = useCallback(async (asset: ImageAsset) => {
     const saved = await defaultVocabRepo.saveImageAsset(asset);
     setImageAssets((prev) => {
@@ -269,19 +301,23 @@ export function App() {
   }, [route]);
 
   useEffect(() => {
-    if (activeSet?.name) {
+    if (route.page === 'history') {
+      document.title = '複習紀錄｜英文單字複習小幫手';
+    } else if (activeSet?.name) {
       document.title = `${activeSet.name}｜英文單字複習小幫手`;
     } else if (activeSharedGroupTitle) {
       document.title = `${activeSharedGroupTitle}｜英文單字複習小幫手`;
     } else {
       document.title = '英文單字複習小幫手';
     }
-  }, [activeSet?.name, activeSharedGroupTitle]);
+  }, [route.page, activeSet?.name, activeSharedGroupTitle]);
 
   return (
     <Layout
       onGoHome={() => navigate({ page: 'home' })}
       onGoImport={() => navigate({ page: 'import' })}
+      onGoHistory={() => navigate({ page: 'history' })}
+      recordCount={practiceRecords.length}
       showImportAction={route.page === 'home'}
     >
       {loadError ? (
@@ -316,6 +352,16 @@ export function App() {
           onSaveWordSet={handleSaveNewSet}
           onSaveImportedGroup={handleSaveImportedGroup}
         />
+      ) : route.page === 'history' ? (
+        <HistoryPage
+          records={practiceRecords}
+          wordSets={wordSets}
+          initialSetFilter={route.setId ?? null}
+          onBackHome={() => navigate({ page: 'home' })}
+          onOpenSet={(setId) => navigate({ page: 'detail', setId })}
+          onDeleteRecord={handleDeletePracticeRecord}
+          onClearRecords={handleClearPracticeRecords}
+        />
       ) : route.page === 'detail' ? (
         loading ? (
           <div className="card">正在讀取單字組…</div>
@@ -324,6 +370,7 @@ export function App() {
             wordSet={activeSet}
             allAssets={imageAssets}
             assetsById={assetsById}
+            recentRecords={practiceRecords.filter((r) => r.wordSetId === activeSet.id)}
             onBack={() => navigate({ page: 'home' })}
             onUpdateSet={handleUpdateSet}
             onDeleteSet={handleDeleteSet}
@@ -331,6 +378,8 @@ export function App() {
             onStartPractice={(mode) =>
               navigate({ page: 'practice', setId: activeSet.id, mode })
             }
+            onViewSetHistory={() => navigate({ page: 'history', setId: activeSet.id })}
+            onDeleteRecord={handleDeletePracticeRecord}
           />
         ) : (
           <div className="card stack-md">
@@ -366,6 +415,8 @@ export function App() {
             assetsById={{}}
             onBackToSet={() => navigate({ page: 'share', token: route.token })}
             onBackToHome={() => navigate({ page: 'home' })}
+            onRecordCompleted={handleSavePracticeRecord}
+            onViewHistory={() => navigate({ page: 'history' })}
           />
         ) : (
           <div className="card stack-md">
@@ -398,6 +449,8 @@ export function App() {
             assetsById={{}}
             onBackToSet={() => navigate({ page: 'share-group', token: route.token })}
             onBackToHome={() => navigate({ page: 'home' })}
+            onRecordCompleted={handleSavePracticeRecord}
+            onViewHistory={() => navigate({ page: 'history' })}
           />
         ) : (
           <div className="card stack-md">
@@ -422,6 +475,8 @@ export function App() {
           assetsById={assetsById}
           onBackToSet={() => navigate({ page: 'detail', setId: activeSet.id })}
           onBackToHome={() => navigate({ page: 'home' })}
+          onRecordCompleted={handleSavePracticeRecord}
+          onViewHistory={() => navigate({ page: 'history', setId: activeSet.id })}
         />
       ) : (
         <div className="card stack-md">
