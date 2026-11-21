@@ -885,6 +885,31 @@ export function parseAnyVocabPackageJson(rawJson: string): ParsedAnyVocabPackage
   throw new Error('不支援的檔案格式，請選擇本網站匯出的共用單字組檔或群組檔。');
 }
 
+/** 產生直接帶入長連結的 TinyURL 縮網址輔助頁網址（開新分頁即直接顯示一行短網址） */
+export function buildTinyUrlShortenLink(longUrl: string): string {
+  return `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`;
+}
+
+/** 產生直接帶入長連結的 is.gd 縮網址輔助頁網址（開新分頁即直接顯示一行短網址） */
+export function buildIsGdShortenLink(longUrl: string): string {
+  return `https://is.gd/create.php?format=simple&url=${encodeURIComponent(longUrl)}`;
+}
+
+/** 檢查使用者貼回的是否為有效 http/https 短網址 */
+export function normalizeCustomShortUrl(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /** 匯出純文字 UTF-8 .txt（每行一個英文詞） */
 export function exportWordSetAsTxt(wordSet: WordSet): string {
   return wordSet.entries

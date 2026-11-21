@@ -17,8 +17,10 @@ import {
   downloadTextFile,
   exportWordSetAsTxt,
   exportWordSetPackageJson,
+  normalizeCustomShortUrl,
   sanitizeFileName,
 } from '../services/shareService';
+import { ShortUrlHelperBox } from './ShortUrlHelperBox';
 
 interface ShareSetModalProps {
   wordSet: WordSet;
@@ -53,14 +55,19 @@ async function copyToClipboard(text: string): Promise<boolean> {
 
 export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalProps) {
   const [copiedMode, setCopiedMode] = useState<'message' | 'link' | null>(null);
+  const [customShortUrlInput, setCustomShortUrlInput] = useState('');
   const [exportingPkg, setExportingPkg] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const shareInfo = useMemo(() => buildShareUrl(wordSet), [wordSet]);
+  const effectiveUrl = useMemo(
+    () => normalizeCustomShortUrl(customShortUrlInput) ?? shareInfo.url,
+    [customShortUrlInput, shareInfo.url],
+  );
   const shareMessage = useMemo(
-    () => buildShareMessage(wordSet, shareInfo.url),
-    [wordSet, shareInfo.url],
+    () => buildShareMessage(wordSet, effectiveUrl),
+    [wordSet, effectiveUrl],
   );
 
   const imageCount = useMemo(() => {
@@ -99,10 +106,10 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
   async function handleCopyLink() {
     setErrorMsg(null);
     setStatusMsg(null);
-    const ok = await copyToClipboard(shareInfo.url);
+    const ok = await copyToClipboard(effectiveUrl);
     if (ok) {
       setCopiedMode('link');
-      setStatusMsg('已複製壓縮後的短連結！貼到 LINE 時也會自動顯示網站預覽卡片。');
+      setStatusMsg('已複製連結！貼到 LINE 時也會自動顯示網站預覽卡片。');
       window.setTimeout(() => setCopiedMode(null), 2500);
     } else {
       setErrorMsg('無法自動複製，請手動複製下方連結。');
@@ -117,7 +124,7 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
       await navigator.share({
         title: shareMessage.title,
         text: `${shareMessage.title}\n${shareMessage.summary}`,
-        url: shareInfo.url,
+        url: effectiveUrl,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -237,6 +244,12 @@ export function ShareSetModal({ wordSet, assetsById, onClose }: ShareSetModalPro
               </span>
             </div>
           ) : null}
+
+          <ShortUrlHelperBox
+            longUrl={shareInfo.url}
+            customShortUrlInput={customShortUrlInput}
+            onChangeCustomShortUrl={setCustomShortUrlInput}
+          />
 
           <textarea
             readOnly

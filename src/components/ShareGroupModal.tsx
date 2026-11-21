@@ -16,8 +16,10 @@ import {
   buildGroupShareUrl,
   downloadTextFile,
   exportWordGroupPackageJson,
+  normalizeCustomShortUrl,
   sanitizeFileName,
 } from '../services/shareService';
+import { ShortUrlHelperBox } from './ShortUrlHelperBox';
 
 interface ShareGroupModalProps {
   group: WordGroup;
@@ -58,6 +60,7 @@ export function ShareGroupModal({
   onClose,
 }: ShareGroupModalProps) {
   const [copiedMode, setCopiedMode] = useState<'message' | 'link' | null>(null);
+  const [customShortUrlInput, setCustomShortUrlInput] = useState('');
   const [exportingPkg, setExportingPkg] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -83,9 +86,13 @@ export function ShareGroupModal({
     () => buildGroupShareUrl(group.name, sets),
     [group.name, sets],
   );
+  const effectiveUrl = useMemo(
+    () => normalizeCustomShortUrl(customShortUrlInput) ?? shareInfo.url,
+    [customShortUrlInput, shareInfo.url],
+  );
   const shareMessage = useMemo(
-    () => buildGroupShareMessage(group.name, sets, shareInfo.url),
-    [group.name, sets, shareInfo.url],
+    () => buildGroupShareMessage(group.name, sets, effectiveUrl),
+    [group.name, sets, effectiveUrl],
   );
 
   const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
@@ -114,10 +121,10 @@ export function ShareGroupModal({
   async function handleCopyLink() {
     setErrorMsg(null);
     setStatusMsg(null);
-    const ok = await copyToClipboard(shareInfo.url);
+    const ok = await copyToClipboard(effectiveUrl);
     if (ok) {
       setCopiedMode('link');
-      setStatusMsg('已複製群組壓縮短連結！');
+      setStatusMsg('已複製群組連結！');
       window.setTimeout(() => setCopiedMode(null), 2500);
     } else {
       setErrorMsg('無法自動複製，請手動複製。');
@@ -132,7 +139,7 @@ export function ShareGroupModal({
       await navigator.share({
         title: shareMessage.title,
         text: `${shareMessage.title}\n${shareMessage.summary}`,
-        url: shareInfo.url,
+        url: effectiveUrl,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -255,6 +262,12 @@ export function ShareGroupModal({
               </span>
             </div>
           ) : null}
+
+          <ShortUrlHelperBox
+            longUrl={shareInfo.url}
+            customShortUrlInput={customShortUrlInput}
+            onChangeCustomShortUrl={setCustomShortUrlInput}
+          />
 
           <textarea
             readOnly

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGroupShareMessage,
   buildGroupShareUrl,
+  buildIsGdShortenLink,
   buildShareMessage,
   buildShareUrl,
+  buildTinyUrlShortenLink,
   decodeShareTokenToWordGroup,
   decodeShareTokenToWordSet,
   encodeWordGroupToShareToken,
@@ -11,6 +13,7 @@ import {
   exportWordGroupPackageJson,
   exportWordSetAsTxt,
   exportWordSetPackageJson,
+  normalizeCustomShortUrl,
   parseAnyVocabPackageJson,
   parseWordSetPackageJson,
 } from '../services/shareService';
@@ -215,5 +218,20 @@ describe('單字組分享連結與匯出／匯入', () => {
     expect(parsed.imageAssets).toHaveLength(1);
     expect(parsed.wordSets[0].entries[0].imageId).toBe(parsed.imageAssets[0].id);
     expect(parsed.wordSets[1].entries[0].imageId).toBe(parsed.imageAssets[0].id);
+  });
+
+  it('縮網址輔助連結與貼回自訂短網址驗證正確', () => {
+    const longUrl = 'https://example.com/#/g/gz.abc123';
+    expect(buildTinyUrlShortenLink(longUrl)).toBe(
+      `https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`,
+    );
+    expect(buildIsGdShortenLink(longUrl)).toBe(
+      `https://is.gd/create.php?format=simple&url=${encodeURIComponent(longUrl)}`,
+    );
+    expect(normalizeCustomShortUrl('  https://tinyurl.com/23n4zkup  ')).toBe(
+      'https://tinyurl.com/23n4zkup',
+    );
+    expect(normalizeCustomShortUrl('not-a-url')).toBeNull();
+    expect(normalizeCustomShortUrl('javascript:alert(1)')).toBeNull();
   });
 });
