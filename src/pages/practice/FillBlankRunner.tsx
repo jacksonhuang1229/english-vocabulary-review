@@ -45,17 +45,23 @@ export function FillBlankRunner({
     return undefined;
   }, [question]);
 
-  // 提交後按 Enter 快速進下一題
+  // 提交後按 Enter 快速進下一題（延遲掛載監聽，避免送出答案的同一次 Enter 冒泡直接跳下一題）
   useEffect(() => {
-    if (!submitted) return;
+    if (!submitted) return undefined;
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.isComposing) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         onNext();
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    const timer = window.setTimeout(() => {
+      window.addEventListener('keydown', onKeyDown);
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [submitted, onNext]);
 
   // 依空格拆分成視覺片段，確保手機自動換行時不會從單字中間斷開
@@ -144,7 +150,9 @@ export function FillBlankRunner({
     }
 
     if (e.key === 'Enter') {
+      if (e.repeat || e.nativeEvent.isComposing) return;
       e.preventDefault();
+      e.stopPropagation();
       handleSubmit();
     }
   }

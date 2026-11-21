@@ -114,17 +114,23 @@ export function ListenSpellRunner({
     };
   }, [voiceLoading, voiceStatus?.available, entry.id, entry.word, questionIndex]);
 
-  // 提交後按 Enter 進下一題
+  // 提交後按 Enter 進下一題（延遲掛載監聽，避免送出答案的同一次 Enter 冒泡直接跳下一題）
   useEffect(() => {
-    if (!submitted) return;
+    if (!submitted) return undefined;
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.isComposing) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         onNext();
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    const timer = window.setTimeout(() => {
+      window.addEventListener('keydown', onKeyDown);
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [submitted, onNext]);
 
   async function handlePlay(rate = 0.92) {

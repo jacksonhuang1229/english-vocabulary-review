@@ -43,6 +43,7 @@ export function PictureChoiceRunner({
   // 桌面鍵盤快捷操作：1~4 選答，答完按 Enter 進下一題
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.isComposing) return;
       if (!selectedId) {
         const num = Number(e.key);
         if (num >= 1 && num <= question.options.length) {
