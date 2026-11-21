@@ -5,6 +5,7 @@ import {
   ImagePlus,
   RotateCcw,
   Trophy,
+  Volume2,
   XCircle,
 } from 'lucide-react';
 import type {
@@ -20,7 +21,7 @@ import {
   shuffleArray,
   type PictureChoiceQuestion,
 } from '../quiz/pictureChoice';
-import { loadEnglishVoiceStatus, stopSpeaking } from '../services/speechService';
+import { loadEnglishVoiceStatus, speakEnglishWord, stopSpeaking } from '../services/speechService';
 import { FillBlankRunner } from './practice/FillBlankRunner';
 import { ListenSpellRunner } from './practice/ListenSpellRunner';
 import { PictureChoiceRunner } from './practice/PictureChoiceRunner';
@@ -191,9 +192,10 @@ export function PracticePage({
   // 本輪結算頁
   if (finished) {
     const correctCount = results.filter((r) => r.correct).length;
+    const wrongResults = results.filter((r) => !r.correct);
+    const wrongCount = wrongResults.length;
     const total = results.length;
     const accuracy = total > 0 ? Math.round((correctCount / total) * 100) : 0;
-    const wrongResults = results.filter((r) => !r.correct);
 
     return (
       <div className="stack-lg">
@@ -216,40 +218,69 @@ export function PracticePage({
             <span className="badge badge-primary" style={{ marginInline: 'auto' }}>
               {wordSet.name} · {MODE_LABELS[mode]}
             </span>
-            <h1 className="page-title">本輪複習完成！</h1>
-            <p style={{ margin: 0, fontSize: '1.15rem' }}>
-              答對 <strong>{correctCount}</strong> / {total} 題（正確率 <strong>{accuracy}%</strong>）
-            </p>
+            <h1 className="page-title">本輪複習完成！（共 {total} 題）</h1>
           </div>
 
-          {wrongResults.length > 0 ? (
+          {/* 清楚呈現：答對幾題 / 答錯幾題 / 正確率 */}
+          <div className="summary-stats-grid" aria-label="本輪答題統計">
+            <div className="summary-stat-card stat-correct">
+              <span className="summary-stat-label">答對</span>
+              <strong className="summary-stat-value">{correctCount} 題</strong>
+            </div>
+            <div className={`summary-stat-card ${wrongCount > 0 ? 'stat-wrong' : 'stat-neutral'}`}>
+              <span className="summary-stat-label">答錯</span>
+              <strong className="summary-stat-value">{wrongCount} 題</strong>
+            </div>
+            <div className="summary-stat-card stat-rate">
+              <span className="summary-stat-label">正確率</span>
+              <strong className="summary-stat-value">{accuracy}%</strong>
+            </div>
+          </div>
+
+          {wrongCount > 0 ? (
             <div className="card-subtle stack-sm" style={{ textAlign: 'left' }}>
-              <strong>本次需要再加強的單字（{wrongResults.length} 個）</strong>
+              <div className="row-between">
+                <strong>答錯的題目（共 {wrongCount} 題）</strong>
+                <span className="field-hint">可對照正確拼寫並點擊聽發音</span>
+              </div>
               <div className="stack-sm">
                 {wrongResults.map((item, idx) => (
-                  <div
-                    key={`${item.entryId}-${idx}`}
-                    className="row-between"
-                    style={{
-                      padding: '0.5rem 0.75rem',
-                      background: '#fff',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid var(--color-border)',
-                    }}
-                  >
-                    <div>
-                      <strong className="en-text" style={{ fontSize: '1.05rem' }}>
-                        {item.word}
-                      </strong>
-                      {item.meaningHint ? (
-                        <span className="muted" style={{ marginLeft: 8, fontSize: '0.85rem' }}>
-                          {item.meaningHint}
+                  <div key={`${item.entryId}-${idx}`} className="wrong-review-item">
+                    <div className="stack-sm" style={{ gap: '0.25rem' }}>
+                      <div className="row-wrap">
+                        <span className="badge badge-success">正確答案</span>
+                        <strong className="en-text" style={{ fontSize: '1.15rem' }}>
+                          {item.word}
+                        </strong>
+                        {item.meaningHint ? (
+                          <span className="muted" style={{ fontSize: '0.88rem' }}>
+                            （{item.meaningHint}）
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="row-wrap" style={{ fontSize: '0.9rem' }}>
+                        <span className="badge badge-danger">你的作答</span>
+                        <span className="en-text" style={{ color: 'var(--color-danger)', fontWeight: 600 }}>
+                          {item.userAnswer}
                         </span>
-                      ) : null}
+                      </div>
                     </div>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--color-danger)' }}>
-                      作答：<span className="en-text">{item.userAnswer}</span>
-                    </span>
+
+                    {englishVoice ? (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        aria-label={`聽 ${item.word} 的發音`}
+                        onClick={() =>
+                          void speakEnglishWord(item.word, { voice: englishVoice }).catch(
+                            () => undefined,
+                          )
+                        }
+                      >
+                        <Volume2 size={15} />
+                        <span>聽發音</span>
+                      </button>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -257,12 +288,12 @@ export function PracticePage({
           ) : (
             <div className="alert alert-success" style={{ justifyContent: 'center' }}>
               <CheckCircle2 size={20} />
-              <strong>太棒了！本輪全部答對！</strong>
+              <strong>太棒了！本輪全部答對，沒有答錯任何題目！</strong>
             </div>
           )}
 
           <div className="row-wrap" style={{ justifyContent: 'center' }}>
-            {wrongResults.length > 0 ? (
+            {wrongCount > 0 ? (
               <button
                 type="button"
                 className="btn btn-primary btn-lg"
@@ -271,12 +302,12 @@ export function PracticePage({
                 }
               >
                 <RotateCcw size={18} />
-                <span>只重練錯題（{wrongResults.length} 題）</span>
+                <span>只重練錯題（{wrongCount} 題）</span>
               </button>
             ) : null}
             <button
               type="button"
-              className={`btn ${wrongResults.length > 0 ? 'btn-secondary' : 'btn-primary'} btn-lg`}
+              className={`btn ${wrongCount > 0 ? 'btn-secondary' : 'btn-primary'} btn-lg`}
               onClick={() => restartRound(undefined)}
             >
               <RotateCcw size={18} />
@@ -290,7 +321,7 @@ export function PracticePage({
           {/* 完整答題明細 */}
           <details style={{ textAlign: 'left', marginTop: '0.5rem' }}>
             <summary style={{ cursor: 'pointer', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
-              展開全部 {results.length} 題作答紀錄
+              展開全部 {results.length} 題作答紀錄（答對 {correctCount}、答錯 {wrongCount}）
             </summary>
             <div className="stack-sm" style={{ marginTop: '0.75rem' }}>
               {results.map((r, i) => (
@@ -303,7 +334,14 @@ export function PracticePage({
                     )}
                     <strong className="en-text">{r.word}</strong>
                   </span>
-                  <span className="muted en-text">{r.userAnswer}</span>
+                  <span
+                    className="en-text"
+                    style={{
+                      color: r.correct ? 'var(--color-success)' : 'var(--color-danger)',
+                    }}
+                  >
+                    {r.userAnswer}
+                  </span>
                 </div>
               ))}
             </div>
@@ -315,6 +353,8 @@ export function PracticePage({
 
   const currentItem = deck[currentIndex];
   const progressPercent = Math.round(((currentIndex + 1) / deck.length) * 100);
+  const runningCorrect = results.filter((r) => r.correct).length;
+  const runningWrong = results.length - runningCorrect;
 
   return (
     <div className="stack-md">
@@ -333,7 +373,12 @@ export function PracticePage({
           <span>
             第 <strong>{currentIndex + 1}</strong> / {deck.length} 題
           </span>
-          <span>已答對 {results.filter((r) => r.correct).length} 題</span>
+          <span>
+            答對 <strong style={{ color: 'var(--color-success)' }}>{runningCorrect}</strong> · 答錯{' '}
+            <strong style={{ color: runningWrong > 0 ? 'var(--color-danger)' : 'inherit' }}>
+              {runningWrong}
+            </strong>
+          </span>
         </div>
         <div className="progress-bar">
           <div className="progress-bar-fill" style={{ width: `${progressPercent}%` }} />

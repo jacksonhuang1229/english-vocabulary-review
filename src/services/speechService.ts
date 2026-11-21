@@ -36,6 +36,46 @@ export function pickBestEnglishVoice(
 }
 
 /**
+ * 同步檢查語音清單是否已就緒（若已載入完成直接回傳，有助於手機端換題時立即自動播放）。
+ */
+export function getEnglishVoiceStatusSync(): EnglishVoiceStatus | null {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window) || !window.speechSynthesis) {
+    return {
+      supported: false,
+      available: false,
+      voice: null,
+      allEnglishVoices: [],
+      isLocal: false,
+      reason: '目前的瀏覽器不支援語音朗讀（SpeechSynthesis），請改用字母填空或看圖選字。',
+    };
+  }
+
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length === 0) return null;
+
+  const { best, allEnglish } = pickBestEnglishVoice(voices);
+  if (!best) {
+    return {
+      supported: true,
+      available: false,
+      voice: null,
+      allEnglishVoices: [],
+      isLocal: false,
+      reason:
+        '裝置上找不到可用的英文語音包。請檢查系統文字轉語音設定，或先返回改用字母填空／看圖選字。',
+    };
+  }
+
+  return {
+    supported: true,
+    available: true,
+    voice: best,
+    allEnglishVoices: allEnglish,
+    isLocal: Boolean(best.localService),
+  };
+}
+
+/**
  * 等候瀏覽器 speechSynthesis 語音清單載入後，檢查是否有可用的英文語音。
  */
 export async function loadEnglishVoiceStatus(timeoutMs = 2000): Promise<EnglishVoiceStatus> {
@@ -122,7 +162,9 @@ export function speakEnglishWord(
 
     const synth = window.speechSynthesis;
     try {
-      synth.cancel();
+      if (synth.speaking || synth.pending) {
+        synth.cancel();
+      }
       if (synth.paused) {
         synth.resume();
       }

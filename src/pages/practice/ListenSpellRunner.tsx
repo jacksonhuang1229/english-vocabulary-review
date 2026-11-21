@@ -12,6 +12,7 @@ import {
 import type { WordEntry } from '../../types/models';
 import { gradeListenSpell } from '../../quiz/normalize';
 import {
+  getEnglishVoiceStatusSync,
   loadEnglishVoiceStatus,
   speakEnglishWord,
   stopSpeaking,
@@ -35,18 +36,23 @@ export function ListenSpellRunner({
   onNext,
   onReturnToSet,
 }: ListenSpellRunnerProps) {
-  const [voiceLoading, setVoiceLoading] = useState(true);
-  const [voiceStatus, setVoiceStatus] = useState<EnglishVoiceStatus | null>(null);
-  const [selectedVoiceUri, setSelectedVoiceUri] = useState<string>('');
+  const [initialSyncStatus] = useState<EnglishVoiceStatus | null>(() => getEnglishVoiceStatusSync());
+  const [voiceLoading, setVoiceLoading] = useState(!initialSyncStatus);
+  const [voiceStatus, setVoiceStatus] = useState<EnglishVoiceStatus | null>(initialSyncStatus);
+  const [selectedVoiceUri, setSelectedVoiceUri] = useState<string>(
+    initialSyncStatus?.voice?.voiceURI ?? '',
+  );
 
   const [inputValue, setInputValue] = useState('');
   const [speaking, setSpeaking] = useState(false);
   const [playError, setPlayError] = useState<string | null>(null);
+  const [autoPlayHint, setAutoPlayHint] = useState(false);
   const [submitted, setSubmitted] = useState<{ correct: boolean; userAnswer: string } | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    if (initialSyncStatus) return undefined;
     let active = true;
     void loadEnglishVoiceStatus().then((status) => {
       if (!active) return;
@@ -58,19 +64,55 @@ export function ListenSpellRunner({
       active = false;
       stopSpeaking();
     };
-  }, []);
+  }, [initialSyncStatus]);
 
-  // 換題時重設輸入並清空上次錯誤
+  const activeVoice =
+    voiceStatus?.allEnglishVoices.find((v) => v.voiceURI === selectedVoiceUri) ??
+    voiceStatus?.voice ??
+    null;
+
+  const activeVoiceRef = useRef<SpeechSynthesisVoice | null>(activeVoice);
+  activeVoiceRef.current = activeVoice;
+
+  // 換題時重設輸入、聚焦輸入框
   useEffect(() => {
     setInputValue('');
     setSubmitted(null);
     setPlayError(null);
-    stopSpeaking();
+    setAutoPlayHint(false);
     const timer = window.setTimeout(() => {
       inputRef.current?.focus();
     }, 50);
     return () => window.clearTimeout(timer);
   }, [entry.id, questionIndex]);
+
+  // 每題出現時自動播放一次目前單字的發音（語音載入完成後立即播放）
+  useEffect(() => {
+    if (voiceLoading || !voiceStatus?.available) return undefined;
+    let cancelled = false;
+    setAutoPlayHint(false);
+    setPlayError(null);
+    setSpeaking(true);
+
+    void speakEnglishWord(entry.word, { voice: activeVoiceRef.current, rate: 0.92 })
+      .catch((err) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : '';
+        if (msg.includes('not-allowed')) {
+          setAutoPlayHint(true);
+        } else {
+          setPlayError(msg || '語音播放失敗，請點擊重試。');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSpeaking(false);
+      });
+
+    return () => {
+      cancelled = true;
+      stopSpeaking();
+    };
+  }, [voiceLoading, voiceStatus?.available, entry.id, entry.word, questionIndex]);
 
   // 提交後按 Enter 進下一題
   useEffect(() => {
@@ -85,13 +127,9 @@ export function ListenSpellRunner({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [submitted, onNext]);
 
-  const activeVoice =
-    voiceStatus?.allEnglishVoices.find((v) => v.voiceURI === selectedVoiceUri) ??
-    voiceStatus?.voice ??
-    null;
-
   async function handlePlay(rate = 0.92) {
     setPlayError(null);
+    setAutoPlayHint(false);
     setSpeaking(true);
     try {
       await speakEnglishWord(entry.word, { voice: activeVoice, rate });
@@ -176,8 +214,14 @@ export function ListenSpellRunner({
           aria-label="播放英文單字發音"
         >
           <Volume2 size={36} />
-          <span>{speaking ? '播放中…' : '點擊播放'}</span>
+          <span>{speaking ? '播放中…' : '再聽一次'}</span>
         </button>
+
+        <span className="field-hint">
+          {autoPlayHint
+            ? '瀏覽器限制自動播放，請點一下上方按鈕收聽發音'
+            : '每題會自動播放一次發音，也可隨時點「重播」或「慢速播放」'}
+        </span>
 
         <div className="row-wrap" style={{ justifyContent: 'center' }}>
           <button
