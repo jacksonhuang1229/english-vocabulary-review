@@ -1,0 +1,80 @@
+/* 共用設計系統：色彩、字體、間距、圓角、陰影與安全區域（桌面與手機共用） */
+:root {
+  /* 色彩系統 */
+  --color-bg: #f5f7fb;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f0f4fa;
+  --color-surface-warm: #fffbf2;
+
+  --color-border: #dce4f0;
+  --color-border-strong: #bcc9de;
+
+  --color-text: #18253d;
+  --color-text-secondary: #4e5f7a;
+  --color-text-muted: #70809b;
+
+  --color-primary: #2859c5;
+  --color-primary-hover: #1e47a3;
+  --color-primary-soft: #e8f0ff;
+  --color-primary-ring: rgba(40, 89, 197, 0.24);
+
+  --color-accent: #e87a1c;
+  --color-accent-soft: #fff2e4;
+
+  --color-success: #168352;
+  --color-success-soft: #e6f7ef;
+  --color-success-border: #9adab9;
+
+  --color-warning: #b4690e;
+  --color-warning-soft: #fff6e0;
+  --color-warning-border: #f0cf85;
+
+  --color-danger: #c73636;
+  --color-danger-soft: #fdecec;
+  --color-danger-border: #f3b3b3;
+
+  /* 字體設定 */
+  --font-sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-english: "Nunito", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* 字級 */
+  --text-xs: 0.78rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.35rem;
+  --text-2xl: 1.65rem;
+  --text-word: clamp(1.45rem, 4.5vw, 2.1rem);
+
+  /* 間距 */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  /* 圓角 */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  /* 陰影 */
+  --shadow-sm: 0 1px 3px rgba(24, 37, 61, 0.06);
+  --shadow-md: 0 6px 18px rgba(24, 37, 61, 0.08);
+  --shadow-lg: 0 14px 36px rgba(24, 37, 61, 0.14);
+
+  /* 版面與觸控尺寸 */
+  --container-max: 920px;
+  --touch-target: 44px;
+  --header-height: 60px;
+
+  /* 手機安全區域 */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}

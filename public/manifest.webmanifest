@@ -1,0 +1,17 @@
+{
+  "name": "英文單字複習小幫手",
+  "short_name": "單字複習",
+  "description": "免登入、本機儲存的英文單字複習工具，支援拍照匯入、字母填空、聽音拼字與看圖選字。",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f6f8fc",
+  "theme_color": "#2859c5",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
