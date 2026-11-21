@@ -51,6 +51,10 @@ export interface DraftEntry {
   word: string;
   meaningHint: string;
   isAbstract?: boolean;
+  /** 若由 .vocab.json 共用檔匯入，暫存對應的配圖 ID 與確認狀態 */
+  bundledImageId?: string | null;
+  bundledImageConfirmed?: boolean;
+  originalBundledWord?: string;
 }
 
 export interface ImportDraft {

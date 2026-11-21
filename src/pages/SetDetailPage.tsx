@@ -13,6 +13,7 @@ import {
   Play,
   Plus,
   Save,
+  Share2,
   Trash2,
   X,
 } from 'lucide-react';
@@ -21,6 +22,7 @@ import { computeSetEligibility } from '../quiz/eligibility';
 import { normalizeSpellText } from '../quiz/normalize';
 import { useImageUrl } from '../hooks/useImageUrl';
 import { ImagePickerModal } from '../components/ImagePickerModal';
+import { ShareSetModal } from '../components/ShareSetModal';
 import { formatStorageError } from '../db/indexedDb';
 import { generateId } from '../utils/id';
 
@@ -96,6 +98,7 @@ export function SetDetailPage({
   const [newMeaning, setNewMeaning] = useState('');
 
   const [imageModalEntryId, setImageModalEntryId] = useState<string | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const eligibility = useMemo(
@@ -214,25 +217,37 @@ export function SetDetailPage({
 
   return (
     <div className="stack-lg">
-      {/* 頂部返回與組名 */}
+      {/* 頂部返回與操作 */}
       <div className="row-between">
         <button type="button" className="btn btn-ghost" onClick={onBack}>
           <ArrowLeft size={18} />
           <span>回到單字組清單</span>
         </button>
 
-        <button
-          type="button"
-          className="btn btn-danger-outline btn-sm"
-          onClick={() => {
-            if (window.confirm(`確定要刪除單字組「${wordSet.name}」嗎？`)) {
-              void onDeleteSet(wordSet.id);
-            }
-          }}
-        >
-          <Trash2 size={15} />
-          <span>刪除單字組</span>
-        </button>
+        <div className="row-wrap">
+          <button
+            type="button"
+            className="btn btn-soft btn-sm"
+            disabled={wordSet.entries.length === 0}
+            onClick={() => setShowShareModal(true)}
+          >
+            <Share2 size={15} />
+            <span>分享／匯出</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-danger-outline btn-sm"
+            onClick={() => {
+              if (window.confirm(`確定要刪除單字組「${wordSet.name}」嗎？`)) {
+                void onDeleteSet(wordSet.id);
+              }
+            }}
+          >
+            <Trash2 size={15} />
+            <span>刪除單字組</span>
+          </button>
+        </div>
       </div>
 
       {/* 課次標題與模式選擇 */}
@@ -650,6 +665,13 @@ export function SetDetailPage({
             );
             await persistEntries(nextEntries);
           }}
+        />
+      ) : null}
+      {showShareModal ? (
+        <ShareSetModal
+          wordSet={wordSet}
+          assetsById={assetsById}
+          onClose={() => setShowShareModal(false)}
         />
       ) : null}
     </div>

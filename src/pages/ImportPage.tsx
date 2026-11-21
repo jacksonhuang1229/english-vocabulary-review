@@ -5,30 +5,35 @@ import {
   Camera,
   CheckCircle2,
   ClipboardPaste,
+  FileJson,
   FileText,
+  Image as ImageIcon,
   ImagePlus,
   Loader2,
   Plus,
   Trash2,
 } from 'lucide-react';
-import type { DraftEntry, WordSet } from '../types/models';
+import type { DraftEntry, ImageAsset, WordSet } from '../types/models';
 import {
   parseWordListText,
   readUtf8TextFile,
   suggestSetNameFromFilename,
 } from '../services/textImport';
+import { parseWordSetPackageJson } from '../services/shareService';
+import { normalizeSpellText } from '../quiz/normalize';
 import { recognizeEnglishWordsFromImage } from '../services/ocrService';
 import { formatStorageError } from '../db/indexedDb';
 import { generateId } from '../utils/id';
 
 interface ImportPageProps {
   onCancel: () => void;
-  onSaveWordSet: (wordSet: WordSet) => Promise<void>;
+  onSaveWordSet: (wordSet: WordSet, bundledAssets?: ImageAsset[]) => Promise<void>;
 }
 
 export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
   const [setName, setSetName] = useState('');
   const [entries, setEntries] = useState<DraftEntry[]>([]);
+  const [bundledAssetsById, setBundledAssetsById] = useState<Record<string, ImageAsset>>({});
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pasteText, setPasteText] = useState('');
 
@@ -43,6 +48,7 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
   const [saving, setSaving] = useState(false);
 
   const txtInputRef = useRef<HTMLInputElement>(null);
+  const pkgInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -75,6 +81,48 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
       setNotice({
         tone: 'danger',
         text: `${err instanceof Error ? err.message : '文字檔讀取失敗'}。您目前的編輯內容已保留。`,
+      });
+    }
+  }
+
+  async function handlePackageFileChange(file: File | undefined) {
+    if (!file) return;
+    setNotice(null);
+    try {
+      const content = await readUtf8TextFile(file);
+      const { wordSet: importedSet, imageAssets } = parseWordSetPackageJson(content);
+      if (!setName.trim()) {
+        setSetName(importedSet.name);
+      }
+      if (imageAssets.length > 0) {
+        setBundledAssetsById((prev) => {
+          const next = { ...prev };
+          for (const asset of imageAssets) {
+            next[asset.id] = asset;
+          }
+          return next;
+        });
+      }
+      const draftItems: DraftEntry[] = importedSet.entries.map((entry) => ({
+        id: generateId('draft'),
+        word: entry.word,
+        meaningHint: entry.meaningHint ?? '',
+        isAbstract: entry.isAbstract,
+        bundledImageId: entry.imageId ?? null,
+        bundledImageConfirmed: Boolean(entry.imageConfirmed),
+        originalBundledWord: entry.word,
+      }));
+      setEntries((prev) => [...prev, ...draftItems]);
+      setNotice({
+        tone: 'success',
+        text: `已從共用單字組檔「${file.name}」載入 ${draftItems.length} 個詞條${
+          imageAssets.length > 0 ? `與 ${imageAssets.length} 張配圖` : ''
+        }，確認後點擊「確認儲存單字組」即可寫入本機。`,
+      });
+    } catch (err) {
+      setNotice({
+        tone: 'danger',
+        text: `${err instanceof Error ? err.message : '共用單字組檔讀取失敗'}。您目前的編輯內容已保留。`,
       });
     }
   }
@@ -187,22 +235,44 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
     }
 
     const now = Date.now();
+    const usedBundledIds = new Set<string>();
     const newSet: WordSet = {
       id: generateId('set'),
       name: trimmedName,
       createdAt: now,
       updatedAt: now,
-      entries: cleanedEntries.map((item) => ({
-        id: generateId('word'),
-        word: item.word,
-        meaningHint: item.meaningHint || undefined,
-        isAbstract: item.isAbstract || undefined,
-      })),
+      entries: cleanedEntries.map((item) => {
+        const hasBundledImg = Boolean(item.bundledImageId && bundledAssetsById[item.bundledImageId]);
+        if (hasBundledImg && item.bundledImageId) {
+          usedBundledIds.add(item.bundledImageId);
+        }
+        const spellingChanged =
+          hasBundledImg &&
+          item.originalBundledWord &&
+          normalizeSpellText(item.word) !== normalizeSpellText(item.originalBundledWord);
+
+        return {
+          id: generateId('word'),
+          word: item.word,
+          meaningHint: item.meaningHint || undefined,
+          isAbstract: item.isAbstract || undefined,
+          imageId: hasBundledImg ? item.bundledImageId : undefined,
+          imageConfirmed: hasBundledImg
+            ? spellingChanged
+              ? false
+              : Boolean(item.bundledImageConfirmed)
+            : undefined,
+        };
+      }),
     };
+
+    const assetsToSave = Array.from(usedBundledIds)
+      .map((id) => bundledAssetsById[id])
+      .filter((a): a is ImageAsset => Boolean(a));
 
     setSaving(true);
     try {
-      await onSaveWordSet(newSet);
+      await onSaveWordSet(newSet, assetsToSave);
     } catch (err) {
       // 寫入失敗時保留預覽中的所有修改
       setNotice({
@@ -276,6 +346,19 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
             type="button"
             className="source-tile"
             disabled={ocrLoading}
+            onClick={() => pkgInputRef.current?.click()}
+          >
+            <span className="source-tile-icon" style={{ background: 'var(--color-success-soft)', color: 'var(--color-success)' }}>
+              <FileJson size={20} />
+            </span>
+            <span className="source-tile-title">匯入共用單字組檔</span>
+            <span className="source-tile-desc">匯入他人分享的 .vocab.json（含配圖）</span>
+          </button>
+
+          <button
+            type="button"
+            className="source-tile"
+            disabled={ocrLoading}
             onClick={() => setShowPasteBox((v) => !v)}
           >
             <span className="source-tile-icon">
@@ -294,6 +377,16 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
           className="sr-only"
           onChange={(e) => {
             void handleTxtFileChange(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <input
+          ref={pkgInputRef}
+          type="file"
+          accept=".json,.vocab.json,application/json"
+          className="sr-only"
+          onChange={(e) => {
+            void handlePackageFileChange(e.target.files?.[0]);
             e.target.value = '';
           }}
         />
@@ -440,6 +533,12 @@ export function ImportPage({ onCancel, onSaveWordSet }: ImportPageProps) {
                     value={item.meaningHint}
                     onChange={(e) => handleUpdateRow(item.id, { meaningHint: e.target.value })}
                   />
+                  {item.bundledImageId && bundledAssetsById[item.bundledImageId] ? (
+                    <span className="badge badge-success" style={{ justifySelf: 'start' }}>
+                      <ImageIcon size={12} />
+                      隨附配圖
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"

@@ -7,11 +7,13 @@ import {
   Image as ImageIcon,
   Plus,
   Search,
+  Share2,
   Sparkles,
   Trash2,
 } from 'lucide-react';
 import type { ImageAsset, WordSet } from '../types/models';
 import { getBrowserStorageEstimate } from '../db/indexedDb';
+import { ShareSetModal } from '../components/ShareSetModal';
 
 interface HomePageProps {
   wordSets: WordSet[];
@@ -53,6 +55,7 @@ export function HomePage({
 }: HomePageProps) {
   const [search, setSearch] = useState('');
   const [loadingSample, setLoadingSample] = useState(false);
+  const [sharingSet, setSharingSet] = useState<WordSet | null>(null);
   const [storageInfo, setStorageInfo] = useState<{ usageBytes: number; quotaBytes: number } | null>(
     null,
   );
@@ -197,20 +200,35 @@ export function HomePage({
                     <div className="stack-sm">
                       <div className="row-between" style={{ alignItems: 'flex-start' }}>
                         <h3 className="set-card-title">{set.name}</h3>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-icon"
-                          style={{ minWidth: 36, minHeight: 36, color: 'var(--color-text-muted)' }}
-                          aria-label={`刪除 ${set.name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (window.confirm(`確定要刪除單字組「${set.name}」嗎？此動作無法復原。`)) {
-                              void onDeleteSet(set.id);
-                            }
-                          }}
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div className="row" style={{ gap: '0.15rem' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon"
+                            style={{ minWidth: 36, minHeight: 36, color: 'var(--color-primary)' }}
+                            aria-label={`分享 ${set.name}`}
+                            disabled={set.entries.length === 0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSharingSet(set);
+                            }}
+                          >
+                            <Share2 size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon"
+                            style={{ minWidth: 36, minHeight: 36, color: 'var(--color-text-muted)' }}
+                            aria-label={`刪除 ${set.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`確定要刪除單字組「${set.name}」嗎？此動作無法復原。`)) {
+                                void onDeleteSet(set.id);
+                              }
+                            }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="row-wrap">
@@ -274,6 +292,14 @@ export function HomePage({
           ) : null}
         </section>
       )}
+
+      {sharingSet ? (
+        <ShareSetModal
+          wordSet={sharingSet}
+          assetsById={assetsById}
+          onClose={() => setSharingSet(null)}
+        />
+      ) : null}
     </div>
   );
 }

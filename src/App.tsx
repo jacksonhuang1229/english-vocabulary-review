@@ -3,17 +3,21 @@ import { AlertTriangle } from 'lucide-react';
 import type { ImageAsset, QuizMode, WordSet } from './types/models';
 import { defaultVocabRepo, formatStorageError } from './db/indexedDb';
 import { createSampleWordSets } from './services/sampleData';
+import { decodeShareTokenToWordSet } from './services/shareService';
 import { Layout } from './components/Layout';
 import { HomePage } from './pages/HomePage';
 import { ImportPage } from './pages/ImportPage';
 import { SetDetailPage } from './pages/SetDetailPage';
 import { PracticePage } from './pages/PracticePage';
+import { SharedSetPage } from './pages/SharedSetPage';
 
 type Route =
   | { page: 'home' }
   | { page: 'import' }
   | { page: 'detail'; setId: string }
-  | { page: 'practice'; setId: string; mode: QuizMode };
+  | { page: 'practice'; setId: string; mode: QuizMode }
+  | { page: 'share'; token: string }
+  | { page: 'share-practice'; token: string; mode: QuizMode };
 
 const VALID_MODES: QuizMode[] = ['fill-blank', 'listen-spell', 'picture-choice'];
 
@@ -30,6 +34,12 @@ function parseHashRoute(hash: string): Route {
   if (parts[0] === 'practice' && parts[1] && VALID_MODES.includes(parts[2] as QuizMode)) {
     return { page: 'practice', setId: parts[1], mode: parts[2] as QuizMode };
   }
+  if (parts[0] === 'share' && parts[1]) {
+    return { page: 'share', token: parts[1] };
+  }
+  if (parts[0] === 'share-practice' && parts[1] && VALID_MODES.includes(parts[2] as QuizMode)) {
+    return { page: 'share-practice', token: parts[1], mode: parts[2] as QuizMode };
+  }
   return { page: 'home' };
 }
 
@@ -37,6 +47,10 @@ function buildHash(route: Route): string {
   if (route.page === 'home') return '#/';
   if (route.page === 'import') return '#/import';
   if (route.page === 'detail') return `#/set/${encodeURIComponent(route.setId)}`;
+  if (route.page === 'share') return `#/share/${encodeURIComponent(route.token)}`;
+  if (route.page === 'share-practice') {
+    return `#/share-practice/${encodeURIComponent(route.token)}/${encodeURIComponent(route.mode)}`;
+  }
   return `#/practice/${encodeURIComponent(route.setId)}/${encodeURIComponent(route.mode)}`;
 }
 
@@ -95,7 +109,12 @@ export function App() {
   }, [imageAssets]);
 
   const handleSaveNewSet = useCallback(
-    async (newSet: WordSet) => {
+    async (newSet: WordSet, bundledAssets?: ImageAsset[]) => {
+      if (bundledAssets && bundledAssets.length > 0) {
+        for (const asset of bundledAssets) {
+          await defaultVocabRepo.saveImageAsset(asset);
+        }
+      }
       await defaultVocabRepo.saveWordSet(newSet);
       await refreshData();
       navigate({ page: 'detail', setId: newSet.id });
@@ -146,6 +165,13 @@ export function App() {
   const activeSet = useMemo(() => {
     if (route.page === 'detail' || route.page === 'practice') {
       return wordSets.find((s) => s.id === route.setId) ?? null;
+    }
+    if (route.page === 'share-practice') {
+      try {
+        return decodeShareTokenToWordSet(route.token);
+      } catch {
+        return null;
+      }
     }
     return null;
   }, [route, wordSets]);
@@ -205,6 +231,38 @@ export function App() {
             <p className="muted" style={{ margin: 0 }}>
               該課次可能已被刪除，或尚未在此瀏覽器中建立。
             </p>
+            <div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => navigate({ page: 'home' })}
+              >
+                返回單字組清單
+              </button>
+            </div>
+          </div>
+        )
+      ) : route.page === 'share' ? (
+        <SharedSetPage
+          token={route.token}
+          onGoHome={() => navigate({ page: 'home' })}
+          onStartDirectPractice={(mode) =>
+            navigate({ page: 'share-practice', token: route.token, mode })
+          }
+          onSaveToLocal={(newSet) => handleSaveNewSet(newSet)}
+        />
+      ) : route.page === 'share-practice' ? (
+        activeSet ? (
+          <PracticePage
+            wordSet={activeSet}
+            mode={route.mode}
+            assetsById={{}}
+            onBackToSet={() => navigate({ page: 'share', token: route.token })}
+            onBackToHome={() => navigate({ page: 'home' })}
+          />
+        ) : (
+          <div className="card stack-md">
+            <h1 className="section-title">分享連結無效或已損毀</h1>
             <div>
               <button
                 type="button"
